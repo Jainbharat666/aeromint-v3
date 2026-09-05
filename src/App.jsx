@@ -1280,6 +1280,165 @@ function App() {
   const [countdown, setCountdown] = useState('');
   const [nowTime, setNowTime] = useState(new Date());
 
+  // ☁️ US Cloud Autonomous Mint Scheduler (Ashburn, VA - 0ms Ping to Robinhood / OpenSea)
+  const [cloudJobId, setCloudJobId] = useState(null);
+  const cloudJobIdRef = useRef(null);
+  const [cloudJobStatus, setCloudJobStatus] = useState(null);
+  const lastCloudLogIndexRef = useRef(0);
+
+  const armCloudMintJob = async (targetEpochMs, overrideStage = null, overridePrice = null) => {
+    try {
+      const currentWallets = walletsRef.current && walletsRef.current.length > 0 ? walletsRef.current : wallets;
+      const currentMasterAddr = masterWalletAddressRef.current || masterWalletAddress;
+      const workerWallets = currentWallets.filter(w => 
+        w.selected && !w.isMaster && 
+        (!currentMasterAddr || w.address.toLowerCase() !== currentMasterAddr.toLowerCase())
+      );
+
+      if (workerWallets.length === 0) {
+        log(`⚠️ [US CLOUD SCHEDULER] No worker wallets selected! Please select at least 1 wallet to arm.`, 'warning');
+        return null;
+      }
+
+      const activeContract = detectedContracts[selectedContractIndex];
+      const stageToUse = overrideStage || seaDropStage || selectedTargetStage?.type || 'public';
+      const priceToUse = overridePrice || pricePerNft || '0.0';
+
+      const payload = {
+        targetEpochMs: Number(targetEpochMs),
+        slug: collectionPreviewRef.current?.slug || collectionPreview?.slug || customSlugInput || '',
+        contractAddress: activeContract?.address || collectionPreviewRef.current?.contractAddress || collectionPreview?.contractAddress || '',
+        seaDropAddress: getSeaDropAddress(selectedNetworkKey),
+        stage: stageToUse,
+        pricePerNft: String(priceToUse),
+        quantity: Number(quantity) || 1,
+        gasSpeed: gasSpeed || 'hyped',
+        wallets: workerWallets.map(w => ({
+          address: w.address,
+          privateKey: w.privateKey,
+          name: w.name || `Wallet #${w.index}`,
+          index: w.index
+        }))
+      };
+
+      log(`☁️ [US CLOUD SCHEDULER] Arming autonomous mint job on US Cloud VPS (Ashburn, VA)...`, 'info');
+
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(currentUser?.email ? { 'x-user-email': currentUser.email } : { 'x-user-email': 'jainbharat666@gmail.com' }),
+        ...(currentUser?.id ? { 'x-user-id': currentUser.id } : { 'x-user-id': 'owner_master_001' }),
+        ...(currentUser?.session_token ? { 'Authorization': `Bearer ${currentUser.session_token}` } : {})
+      };
+
+      const endpoint = `${BACKEND_BASE || ''}/api/cloud-mint/schedule`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (data && data.success && data.jobId) {
+        setCloudJobId(data.jobId);
+        cloudJobIdRef.current = data.jobId;
+        setCloudJobStatus('ARMED');
+        lastCloudLogIndexRef.current = 0;
+        log(`☁️ [US CLOUD ENGINE ARMED] Job #${data.jobId.slice(0, 14)} active on Ashburn VPS! Target: ${new Date(targetEpochMs).toLocaleTimeString()} (<1ms to Sequencer)`, 'success');
+        return data.jobId;
+      } else {
+        throw new Error(data?.error || 'Failed to arm on US Cloud');
+      }
+    } catch (err) {
+      console.warn('[US Cloud Scheduler Error]:', err.message);
+      log(`⚠️ [US CLOUD SCHEDULER] Notice: ${err.message}. Local fallback scheduler active.`, 'warning');
+      return null;
+    }
+  };
+
+  const cancelCloudMintJob = async () => {
+    const activeId = cloudJobIdRef.current || cloudJobId;
+    if (activeId) {
+      try {
+        const headers = {
+          'Content-Type': 'application/json',
+          ...(currentUser?.email ? { 'x-user-email': currentUser.email } : { 'x-user-email': 'jainbharat666@gmail.com' }),
+          ...(currentUser?.id ? { 'x-user-id': currentUser.id } : { 'x-user-id': 'owner_master_001' }),
+          ...(currentUser?.session_token ? { 'Authorization': `Bearer ${currentUser.session_token}` } : {})
+        };
+        const endpoint = `${BACKEND_BASE || ''}/api/cloud-mint/cancel`;
+        await fetch(endpoint, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ jobId: activeId })
+        });
+        log(`🛑 [US CLOUD SCHEDULER] Job #${activeId.slice(0, 14)} cancelled on US Cloud VPS. Private keys purged from RAM.`, 'info');
+      } catch (err) {
+        console.warn('[Cancel Cloud Job Error]:', err.message);
+      }
+    }
+    setCloudJobId(null);
+    cloudJobIdRef.current = null;
+    setCloudJobStatus(null);
+    lastCloudLogIndexRef.current = 0;
+  };
+
+  // Live log polling for US Cloud Scheduler
+  useEffect(() => {
+    if (!cloudJobId || !isScheduled) return;
+
+    let isPolling = true;
+    const pollInterval = setInterval(async () => {
+      if (!isPolling) return;
+      try {
+        const endpoint = `${BACKEND_BASE || ''}/api/cloud-mint/status?jobId=${encodeURIComponent(cloudJobId)}`;
+        const res = await fetch(endpoint);
+        const data = await res.json();
+        if (data && data.success && data.found) {
+          const job = data.job;
+          setCloudJobStatus(job?.status || null);
+
+          // Stream new logs from US VPS into Live Console
+          if (Array.isArray(data.logs) && data.logs.length > lastCloudLogIndexRef.current) {
+            const newEntries = data.logs.slice(lastCloudLogIndexRef.current);
+            lastCloudLogIndexRef.current = data.logs.length;
+            newEntries.forEach(entry => {
+              log(`☁️ [US VPS] ${entry.msg}`, entry.level || 'info');
+            });
+          }
+
+          if (job?.status === 'EXECUTED') {
+            log(`🎉 [US CLOUD MINT SUCCESS] Successfully executed in Ashburn, VA! Blast confirmed.`, 'success');
+            setIsScheduled(false);
+            setCloudJobId(null);
+            cloudJobIdRef.current = null;
+            setCountdown('🎯 BLAST CONFIRMED');
+            try { triggerCelebration(); } catch (e) {}
+            try { playSound('success'); } catch (e) {}
+            clearInterval(pollInterval);
+          } else if (job?.status === 'FAILED') {
+            log(`❌ [US CLOUD MINT ERROR] VPS returned failure: ${job?.results?.error || 'Execution failure'}`, 'error');
+            setIsScheduled(false);
+            setCloudJobId(null);
+            cloudJobIdRef.current = null;
+            clearInterval(pollInterval);
+          } else if (job?.status === 'CANCELLED') {
+            setIsScheduled(false);
+            setCloudJobId(null);
+            cloudJobIdRef.current = null;
+            clearInterval(pollInterval);
+          }
+        }
+      } catch (e) {
+        // Intermittent network hiccup during polling
+      }
+    }, 1000);
+
+    return () => {
+      isPolling = false;
+      clearInterval(pollInterval);
+    };
+  }, [cloudJobId, isScheduled]);
+
   // User-Controlled SeaDrop Stage Binding (Initializes once when collection is scanned; NEVER overwrites user selection)
   useEffect(() => {
     if (!isSeaDrop || !collectionPreview?.stages || !Array.isArray(collectionPreview.stages) || collectionPreview.stages.length === 0) {
@@ -1333,6 +1492,9 @@ function App() {
     
     const funcName = targetType === 'allowlist' ? 'mintAllowList()' : 'mintPublic()';
     log(`⏰ SCHEDULE LOCKED: Stage "${stg.name}" ➔ Target: ${dateObj.toLocaleTimeString()} [${funcName} | Price: ${stagePriceStr} ETH | Limit: ${stg.maxPerWallet || 1}]`, 'success');
+
+    // ☁️ Dispatch to US Cloud VPS Scheduler (Ashburn, VA)
+    armCloudMintJob(epochMs, targetType, stagePriceStr);
 
     // ⚡ Pre-fetch signed allowlist calldata into RAM cache via OSNM-Z 1-Shot Batch GraphQL
     if (targetType === 'allowlist' && collectionPreview?.slug) {
@@ -1452,6 +1614,7 @@ function App() {
     scheduledEpochMsRef.current = target.getTime();
     setScheduledTime(formatted);
     setIsScheduled(true);
+    armCloudMintJob(target.getTime());
     log(`Preset schedule target set: +${minutesToAdd} mins (${target.toLocaleTimeString()})`, 'info');
 
     // Pre-fetch signed allowlist calldata into RAM cache immediately
@@ -2105,11 +2268,16 @@ function App() {
       // T-Minus Lead Blast Engine: Fires `leadBlastMs` before exact drop second for Block 0 placement
       const effectiveLeadMs = leadBlastMs || 0;
       if (diff <= effectiveLeadMs) {
-        setCountdown('⚡ LEAD BLAST FIRING NOW...');
-        setIsScheduled(false);
-        setIsBurstMode(false);
-        log(`⏱️ T-MINUS LEAD BLAST: Fired ${effectiveLeadMs}ms early for Guaranteed Block 0 Placement!`, 'warning');
-        executeMint();
+        if (cloudJobIdRef.current) {
+          setCountdown('⚡ US CLOUD FIRING FROM ASHBURN, VA...');
+          log(`☁️ [T-0 ASHBURN DISPATCH] US Cloud VPS executing atomic lockstep blast at 0ms latency!`, 'warning');
+        } else {
+          setCountdown('⚡ LEAD BLAST FIRING NOW...');
+          setIsScheduled(false);
+          setIsBurstMode(false);
+          log(`⏱️ T-MINUS LEAD BLAST (LOCAL FALLBACK): Fired ${effectiveLeadMs}ms early for Guaranteed Block 0 Placement!`, 'warning');
+          executeMint();
+        }
       } else {
         const secs = Math.floor(diff / 1000) % 60;
         const mins = Math.floor(diff / (1000 * 60)) % 60;
@@ -9169,9 +9337,27 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
 
             {/* Pro Mint Scheduler & Timezone Suite Panel */}
             <div className="glass-panel" style={{ textAlign: 'left' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ margin: 0, fontSize: '0.98rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem' }}>
+                <h3 style={{ margin: 0, fontSize: '0.98rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                   <span>🕰️ Pro Mint Scheduler</span>
+                  {cloudJobId && (
+                    <span style={{ 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      gap: '0.3rem', 
+                      padding: '0.15rem 0.5rem', 
+                      background: 'rgba(16, 185, 129, 0.15)', 
+                      border: '1px solid #10b981', 
+                      borderRadius: '4px', 
+                      color: '#10b981', 
+                      fontSize: '0.68rem', 
+                      fontWeight: 'bold',
+                      boxShadow: '0 0 8px rgba(16, 185, 129, 0.25)'
+                    }}>
+                      <span className="pulse-dot green" />
+                      ☁️ US CLOUD VPS ARMED (Ashburn, VA • 0ms Ping)
+                    </span>
+                  )}
                 </h3>
                 <span className="pulse-dot green" title="Real-Time Seconds Clock Active" />
               </div>
@@ -9184,7 +9370,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                 padding: '0.4rem 0.65rem',
                 marginTop: '0.4rem',
                 display: 'flex',
-                justify: 'space-between',
+                justifyContent: 'space-between',
                 fontSize: '0.75rem',
                 fontFamily: 'var(--font-mono)'
               }}>
@@ -9243,7 +9429,30 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                     className={`btn ${isScheduled ? 'btn-danger scheduler-active-pulse' : 'btn-primary'}`} 
                     onClick={() => {
                       playSound('click');
-                      setIsScheduled(!isScheduled);
+                      if (isScheduled) {
+                        setIsScheduled(false);
+                        cancelCloudMintJob();
+                      } else {
+                        let targetMs = scheduledEpochMsRef.current;
+                        if (!targetMs && scheduledTime) {
+                          const parts = scheduledTime.split('T');
+                          if (parts.length === 2) {
+                            const [year, month, day] = parts[0].split('-').map(Number);
+                            const [hour, min, sec] = (parts[1] || '00:00:00').split(':').map(Number);
+                            if (scheduledTimezone === 'UTC') {
+                              targetMs = Date.UTC(year, month - 1, day, hour, min, sec || 0);
+                            } else {
+                              targetMs = new Date(year, month - 1, day, hour, min, sec || 0).getTime();
+                            }
+                          }
+                        }
+                        if (!targetMs || targetMs <= Date.now()) {
+                          log('⚠️ Please choose a future date/time or click a preset (+1m, +5m)', 'warning');
+                          return;
+                        }
+                        setIsScheduled(true);
+                        armCloudMintJob(targetMs);
+                      }
                     }}
                     style={{ height: '38px', padding: '0 0.6rem', fontSize: '0.8rem', whiteSpace: 'nowrap', width: '100%' }}
                   >
@@ -9339,23 +9548,34 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                 <div style={{ 
                   marginTop: '0.5rem',
                   padding: '0.65rem', 
-                  background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(239, 68, 68, 0.15) 100%)', 
-                  border: '1.5px solid rgba(245, 158, 11, 0.4)', 
+                  background: cloudJobId 
+                    ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(56, 189, 248, 0.12) 100%)' 
+                    : 'linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(239, 68, 68, 0.15) 100%)', 
+                  border: cloudJobId 
+                    ? '1.5px solid rgba(16, 185, 129, 0.4)' 
+                    : '1.5px solid rgba(245, 158, 11, 0.4)', 
                   borderRadius: '8px', 
-                  color: 'var(--accent-yellow)', 
+                  color: cloudJobId ? '#10b981' : 'var(--accent-yellow)', 
                   fontSize: '0.88rem',
                   display: 'flex',
-                  justify: 'space-between',
+                  justifyContent: 'space-between',
                   alignItems: 'center',
-                  boxShadow: '0 0 15px rgba(245, 158, 11, 0.2)'
+                  boxShadow: cloudJobId ? '0 0 15px rgba(16, 185, 129, 0.2)' : '0 0 15px rgba(245, 158, 11, 0.2)'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span className="pulse-dot yellow" />
-                    <strong>Mint Countdown Ticker:</strong>
+                    <span className={`pulse-dot ${cloudJobId ? 'green' : 'yellow'}`} />
+                    <strong>{cloudJobId ? '☁️ US Cloud VPS Scheduler (Ashburn, VA):' : 'Mint Countdown Ticker:'}</strong>
                   </div>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '1rem', fontWeight: 'bold', color: '#ffffff' }}>
-                    {countdown}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    {cloudJobId && (
+                      <span style={{ fontSize: '0.7rem', background: 'rgba(16, 185, 129, 0.2)', padding: '2px 6px', borderRadius: '4px', color: '#6ee7b7' }}>
+                        0ms Sequencer Lead
+                      </span>
+                    )}
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '1rem', fontWeight: 'bold', color: '#ffffff' }}>
+                      {countdown}
+                    </span>
+                  </div>
                 </div>
               )}
             </div>

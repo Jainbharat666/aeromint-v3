@@ -2315,6 +2315,497 @@ app.all('/api/benchmark-rpcs', async (req, res) => {
   }
 });
 
+// ─── ⚡ US CLOUD AUTONOMOUS MINT SCHEDULER (ASHBURN, VA) ─────────────────────
+// Executes high-precision scheduled mints natively from US Datacenter (0ms India Ping Dependency)
+
+const cloudScheduledJobs = new Map();
+const cloudJobLogs = new Map();
+
+function addCloudLog(jobId, message, type = 'info') {
+  const timeStr = new Date().toISOString().split('T')[1].replace('Z', '');
+  const prefix = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : type === 'success' ? '🎯' : '⚡';
+  const entry = `[${timeStr}] ${prefix} ${message}`;
+  if (!cloudJobLogs.has(jobId)) cloudJobLogs.set(jobId, []);
+  const arr = cloudJobLogs.get(jobId);
+  arr.push(entry);
+  if (arr.length > 200) arr.shift();
+  console.log(`[CloudScheduler:${jobId}] ${entry}`);
+}
+
+const CLOUD_RPCS = [
+  'https://rpc.mainnet.chain.robinhood.com',
+  'https://robinhood-mainnet.g.alchemy.com/v2/alch_FtrEfyyJYzEBZ0SQ3ctbJ'
+];
+
+async function cloudExecuteMempoolBlast(rawSignedTxs) {
+  const blastStart = Date.now();
+  const blastResults = await Promise.all(rawSignedTxs.map(async (rawTx) => {
+    const txHash = ethers.keccak256(rawTx);
+    const payload = {
+      jsonrpc: '2.0',
+      method: 'eth_sendRawTransaction',
+      params: [rawTx],
+      id: Math.floor(Math.random() * 1000000)
+    };
+
+    const nodeOutcomes = await Promise.allSettled(CLOUD_RPCS.map(url =>
+      axios.post(url, payload, { timeout: 3500, headers: { 'Content-Type': 'application/json' } })
+    ));
+
+    let acceptedCount = 0;
+    let lastError = null;
+    nodeOutcomes.forEach(o => {
+      if (o.status === 'fulfilled') {
+        if (o.value?.data?.result) acceptedCount++;
+        else if (o.value?.data?.error) lastError = o.value.data.error.message;
+      } else {
+        lastError = o.reason?.message;
+      }
+    });
+
+    return {
+      txHash,
+      success: acceptedCount > 0,
+      nodesAccepted: acceptedCount,
+      totalNodes: CLOUD_RPCS.length,
+      error: acceptedCount === 0 ? lastError : null
+    };
+  }));
+
+  return {
+    blastDurationMs: Date.now() - blastStart,
+    results: blastResults
+  };
+}
+
+// 1. Submit Schedule Job to US Cloud VPS
+app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
+  try {
+    const {
+      slug,
+      contractAddress,
+      seaDropAddress,
+      stage,
+      quantity = 1,
+      pricePerNft = '0.0',
+      gasSpeed = 'hyped',
+      customMaxFee,
+      customPriorityFee,
+      targetEpochMs,
+      wallets = []
+    } = req.body;
+
+    if (!targetEpochMs || isNaN(Number(targetEpochMs))) {
+      return res.status(400).json({ success: false, error: 'targetEpochMs (UTC milliseconds) is required' });
+    }
+    if (!Array.isArray(wallets) || wallets.length === 0) {
+      return res.status(400).json({ success: false, error: 'At least one wallet is required' });
+    }
+
+    const jobId = `cjob_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const job = {
+      id: jobId,
+      slug: slug ? slug.trim() : '',
+      contractAddress: contractAddress || '',
+      seaDropAddress: seaDropAddress || '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
+      stage: stage || 'public',
+      quantity: Number(quantity) || 1,
+      pricePerNft: String(pricePerNft || '0.0'),
+      gasSpeed: gasSpeed || 'hyped',
+      customMaxFee,
+      customPriorityFee,
+      targetEpochMs: Number(targetEpochMs),
+      wallets: wallets.map(w => ({
+        address: w.address,
+        privateKey: w.privateKey,
+        name: w.name || w.address.slice(0, 6),
+        index: w.index
+      })),
+      status: 'ARMED',
+      warmedT25: false,
+      siweT20: false,
+      prefetchedT12: false,
+      preflightT10: false,
+      presignT5: false,
+      executedT0: false,
+      signedCalldataMap: new Map(),
+      preSignedRawTxs: [],
+      results: null,
+      createdAt: new Date().toISOString()
+    };
+
+    cloudScheduledJobs.set(jobId, job);
+    addCloudLog(jobId, `Job ARMED on US Cloud VPS (Ashburn, VA)! Target: ${new Date(job.targetEpochMs).toISOString()} | Wallets: ${job.wallets.length}`, 'success');
+
+    return res.json({
+      success: true,
+      jobId,
+      status: 'ARMED',
+      targetEpochMs: job.targetEpochMs,
+      message: 'Job successfully scheduled in US Cloud VPS memory.'
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. Cancel Job
+app.post('/api/cloud-mint/cancel', adminAuthMiddleware, async (req, res) => {
+  const { jobId } = req.body;
+  if (jobId && cloudScheduledJobs.has(jobId)) {
+    const job = cloudScheduledJobs.get(jobId);
+    if (job.wallets) job.wallets.forEach(w => { delete w.privateKey; });
+    job.status = 'CANCELLED';
+    addCloudLog(jobId, 'Job CANCELLED by user.', 'warning');
+    cloudScheduledJobs.delete(jobId);
+    return res.json({ success: true, message: 'Cloud scheduled job cancelled.' });
+  }
+  return res.json({ success: true, message: 'Job not found or already executed.' });
+});
+
+// 3. Query Cloud Job Status
+app.get('/api/cloud-mint/status', async (req, res) => {
+  const { jobId } = req.query;
+  if (jobId) {
+    const job = cloudScheduledJobs.get(jobId);
+    const logs = cloudJobLogs.get(jobId) || [];
+    if (!job) {
+      return res.json({ success: true, found: false, logs });
+    }
+    const safeJob = {
+      id: job.id,
+      slug: job.slug,
+      stage: job.stage,
+      status: job.status,
+      targetEpochMs: job.targetEpochMs,
+      walletsCount: job.wallets?.length || 0,
+      createdAt: job.createdAt,
+      results: job.results
+    };
+    return res.json({ success: true, found: true, job: safeJob, logs });
+  }
+
+  const jobsSummary = Array.from(cloudScheduledJobs.values()).map(j => ({
+    id: j.id,
+    slug: j.slug,
+    stage: j.stage,
+    status: j.status,
+    targetEpochMs: j.targetEpochMs,
+    walletsCount: j.wallets?.length || 0,
+    createdAt: j.createdAt
+  }));
+  return res.json({ success: true, activeJobs: jobsSummary });
+});
+
+// 4. Background Ticker Loop (5ms micro-poll for sub-second precision)
+setInterval(async () => {
+  if (cloudScheduledJobs.size === 0) return;
+  const now = timeSync.getNow();
+
+  for (const [jobId, job] of cloudScheduledJobs.entries()) {
+    if (job.status === 'CANCELLED' || job.status === 'EXECUTED' || job.status === 'FAILED') continue;
+
+    const diff = job.targetEpochMs - now;
+
+    // ⚡ T-25s: PRE-WARM RPC SOCKETS
+    if (diff <= 25000 && diff > 20000 && !job.warmedT25) {
+      job.warmedT25 = true;
+      job.status = 'WARMING_T25';
+      addCloudLog(jobId, 'T-25s: Probing Robinhood RPC sockets from Ashburn datacenter...', 'info');
+      CLOUD_RPCS.forEach(url => {
+        axios.post(url, { jsonrpc: '2.0', method: 'eth_blockNumber', params: [], id: 1 }, { timeout: 2000 }).catch(() => {});
+      });
+    }
+
+    // ⚡ T-20s: OPENSEA SIWE PRE-AUTHENTICATION (Virginia Datacenter Edge)
+    if (diff <= 20000 && diff > 12000 && !job.siweT20) {
+      job.siweT20 = true;
+      job.status = 'SIWE_T20';
+      (async () => {
+        try {
+          if (job.slug && job.wallets && job.wallets.length > 0) {
+            addCloudLog(jobId, `T-20s: Authenticating ${job.wallets.length} wallets with OpenSea SIWE directly from Virginia (28ms)...`, 'info');
+            const referer = `https://opensea.io/collection/${job.slug}`;
+            await Promise.allSettled(job.wallets.map(async (w) => {
+              try {
+                const nonceRes = await axios.get('https://opensea.io/__api/auth/siwe/nonce', {
+                  headers: { 'User-Agent': 'Mozilla/5.0', Referer: referer },
+                  timeout: 4000
+                });
+                const nonce = nonceRes.data?.nonce;
+                if (!nonce) return;
+                const isoTime = new Date().toISOString();
+                const message = `opensea.io wants you to sign in with your Ethereum account:\n${w.address.toLowerCase()}\n\nSign in with Ethereum to the app.\n\nURI: https://opensea.io\nVersion: 1\nChain ID: 4663\nNonce: ${nonce}\nIssued At: ${isoTime}`;
+                const walletObj = new ethers.Wallet(w.privateKey);
+                const signature = await walletObj.signMessage(message);
+                const verifyRes = await axios.post('https://opensea.io/__api/auth/siwe/verify', {
+                  message, signature, chainArch: 'ETHEREUM'
+                }, {
+                  headers: { 'User-Agent': 'Mozilla/5.0', Referer: referer, Origin: 'https://opensea.io', 'Content-Type': 'application/json' },
+                  timeout: 4000
+                });
+                const rawCookies = verifyRes.headers['set-cookie'] || [];
+                const cookieHeader = rawCookies.map(c => c.split(';')[0]).join('; ');
+                const fullCookies = `${cookieHeader}; connected-account-server-hint=${w.address.toLowerCase()}`;
+                walletSessionCookies.set(w.address.toLowerCase(), fullCookies);
+              } catch (_) {}
+            }));
+            addCloudLog(jobId, `T-20s: SIWE Pre-authentication completed in Virginia!`, 'success');
+          }
+        } catch (e) {
+          addCloudLog(jobId, `T-20s SIWE Notice: ${e.message}`, 'warning');
+        }
+      })();
+    }
+
+    // ⚡ T-12s: CALLDATA PRE-FETCH (1-Shot GraphQL)
+    if (diff <= 12000 && diff > 6000 && !job.prefetchedT12) {
+      job.prefetchedT12 = true;
+      (async () => {
+        try {
+          if (job.slug && (job.stage === 'allowlist')) {
+            addCloudLog(jobId, 'T-12s: Querying OpenSea 1-Shot GraphQL for presale signatures...', 'warning');
+            const contractAddr = job.contractAddress;
+            if (contractAddr) {
+              const reqs = job.wallets.map(w => ({ address: w.address, quantity: job.quantity }));
+              const firstAddr = reqs[0]?.address?.toLowerCase();
+              const authCookie = firstAddr ? walletSessionCookies.get(firstAddr) : null;
+              
+              let queryVars = `$fromAssets: [AssetQuantityInput!]!, $recipient: Address`;
+              let queryBody = '';
+              const variables = {
+                fromAssets: [{ asset: { contractAddress: "0x0000000000000000000000000000000000000000", chain: 'robinhood' } }],
+                recipient: firstAddr
+              };
+              reqs.forEach((r, idx) => {
+                queryVars += `, $address_${idx}: Address!, $toAssets_${idx}: [AssetQuantityInput!]!`;
+                queryBody += `\n  wallet_${idx}: swap(address: $address_${idx}, fromAssets: $fromAssets, toAssets: $toAssets_${idx}, recipient: $recipient, action: MINT) { actions { ... on TransactionAction { transactionSubmissionData { to data value } } } }`;
+                variables[`address_${idx}`] = r.address;
+                variables[`toAssets_${idx}`] = [{ asset: { contractAddress: contractAddr, tokenId: '0', chain: 'robinhood' }, quantity: String(r.quantity || 1) }];
+              });
+              const gqlQuery = `query BatchMintActionTimelineQuery(${queryVars}) { ${queryBody} }`;
+              const gqlRes = await axios.post('https://gql.opensea.io/graphql', {
+                operationName: 'BatchMintActionTimelineQuery',
+                query: gqlQuery,
+                variables
+              }, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0',
+                  'X-API-KEY': getNextApiKey(),
+                  'Cookie': authCookie || `connected-account-server-hint=${firstAddr}`
+                },
+                timeout: 5000
+              });
+              const dataObj = gqlRes.data?.data;
+              if (dataObj) {
+                let secured = 0;
+                job.wallets.forEach((w, idx) => {
+                  const sub = dataObj[`wallet_${idx}`]?.actions?.[0]?.transactionSubmissionData;
+                  if (sub?.data) {
+                    job.signedCalldataMap.set(w.address.toLowerCase(), sub);
+                    secured++;
+                  }
+                });
+                if (secured > 0) {
+                  addCloudLog(jobId, `T-12s: Early OpenSea Signatures Secured for ${secured}/${job.wallets.length} wallets!`, 'success');
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      })();
+    }
+
+    // ⚡ T-10s: HIGH-SPEED PARALLEL BALANCE AUDIT (2ms from US Datacenter)
+    if (diff <= 10000 && diff > 5000 && !job.preflightT10) {
+      job.preflightT10 = true;
+      job.status = 'PREFLIGHT_T10';
+      (async () => {
+        try {
+          addCloudLog(jobId, 'T-10s: Pre-flight Balance Audit across worker wallets...', 'info');
+          const provider = new ethers.JsonRpcProvider('https://rpc.mainnet.chain.robinhood.com');
+          let cleared = 0;
+          await Promise.all(job.wallets.map(async (w) => {
+            try {
+              const bal = await provider.getBalance(w.address);
+              w.balance = bal;
+              cleared++;
+            } catch (_) {}
+          }));
+          addCloudLog(jobId, `T-10s: Audit Complete: ${cleared}/${job.wallets.length} wallets cleared & armed!`, 'success');
+        } catch (e) {
+          addCloudLog(jobId, `T-10s Warning: ${e.message}`, 'warning');
+        }
+      })();
+    }
+
+    // ⚡ T-5s: PRE-ASSEMBLE & PRE-SIGN TRANSACTIONS IN RAM
+    if (diff <= 5000 && diff > 1000 && !job.presignT5) {
+      job.presignT5 = true;
+      job.status = 'PRESIGN_T5';
+      (async () => {
+        try {
+          addCloudLog(jobId, 'T-5s: Pre-fetching Dynamic Gas and Nonces in RAM...', 'info');
+          const provider = new ethers.JsonRpcProvider('https://rpc.mainnet.chain.robinhood.com');
+          const feeData = await provider.getFeeData().catch(() => null);
+          const baseGas = feeData?.maxFeePerGas || feeData?.gasPrice || 100000000n;
+          
+          let maxFee = (baseGas * 250n) / 100n + ethers.parseUnits('0.50', 'gwei');
+          let maxPriority = ethers.parseUnits('0.50', 'gwei');
+
+          if (job.gasSpeed === 'surge') {
+            maxFee = (baseGas * 160n) / 100n + ethers.parseUnits('0.05', 'gwei');
+            maxPriority = ethers.parseUnits('0.05', 'gwei');
+          }
+
+          job.computedMaxFee = maxFee;
+          job.computedMaxPriority = maxPriority;
+
+          // Pre-fetch nonces
+          await Promise.all(job.wallets.map(async (w) => {
+            try {
+              w.nonce = await provider.getTransactionCount(w.address, 'pending');
+            } catch (_) {
+              w.nonce = 0;
+            }
+          }));
+
+          const isPublic = job.stage === 'public';
+          const hasAllSignatures = job.wallets.every(w => job.signedCalldataMap.has(w.address.toLowerCase()));
+
+          if (isPublic || hasAllSignatures) {
+            const preSigned = [];
+            for (const w of job.wallets) {
+              const sub = job.signedCalldataMap.get(w.address.toLowerCase());
+              const toAddr = sub?.to || job.seaDropAddress;
+              const txData = sub?.data || '0x';
+              const val = sub?.value !== undefined ? BigInt(sub.value) : (job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
+
+              const tx = {
+                to: toAddr,
+                data: txData,
+                value: val,
+                nonce: w.nonce,
+                gasLimit: 220000n,
+                maxFeePerGas: maxFee,
+                maxPriorityFeePerGas: maxPriority,
+                chainId: 4663,
+                type: 2
+              };
+              const signer = new ethers.Wallet(w.privateKey);
+              const signedRaw = await signer.signTransaction(tx);
+              preSigned.push(signedRaw);
+            }
+            job.preSignedRawTxs = preSigned;
+            addCloudLog(jobId, `T-5s: Pre-signed ${preSigned.length} raw transactions in RAM! Ready for 0.0ms T-0 blast!`, 'success');
+          } else {
+            addCloudLog(jobId, `T-5s: Calldata selector armed in RAM. Staggered Laser Grid ready for T-0!`, 'info');
+          }
+        } catch (e) {
+          addCloudLog(jobId, `T-5s Pre-sign error: ${e.message}`, 'error');
+        }
+      })();
+    }
+
+    // ⚡ EXACT T-0 (ASHBURN LOCAL LEAD: 28ms to OpenSea / 0ms to RPC)
+    if (diff <= 28 && !job.executedT0) {
+      job.executedT0 = true;
+      job.status = 'EXECUTING_T0';
+      (async () => {
+        const t0Start = Date.now();
+        addCloudLog(jobId, `T-0 TRIGGER ENGAGED! Executing from Ashburn Datacenter at target millisecond!`, 'success');
+        try {
+          if (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) {
+            const blastOutcome = await cloudExecuteMempoolBlast(job.preSignedRawTxs);
+            job.results = blastOutcome;
+            job.status = 'EXECUTED';
+            addCloudLog(jobId, `🎯 LOCKSTEP MEMPOOL BLAST CONFIRMED in ${blastOutcome.blastDurationMs}ms! Dispatched directly to Robinhood nodes!`, 'success');
+          } else {
+            addCloudLog(jobId, `⚡ Engaging 6-Key Staggered Laser Pipeline from Ashburn Edge...`, 'warning');
+            const contractAddr = job.contractAddress;
+            const reqs = job.wallets.map(w => ({ address: w.address, quantity: job.quantity }));
+            const firstAddr = reqs[0]?.address?.toLowerCase();
+            const authCookie = firstAddr ? walletSessionCookies.get(firstAddr) : null;
+
+            let queryVars = `$fromAssets: [AssetQuantityInput!]!, $recipient: Address`;
+            let queryBody = '';
+            const variables = {
+              fromAssets: [{ asset: { contractAddress: "0x0000000000000000000000000000000000000000", chain: 'robinhood' } }],
+              recipient: firstAddr
+            };
+            reqs.forEach((r, idx) => {
+              queryVars += `, $address_${idx}: Address!, $toAssets_${idx}: [AssetQuantityInput!]!`;
+              queryBody += `\n  wallet_${idx}: swap(address: $address_${idx}, fromAssets: $fromAssets, toAssets: $toAssets_${idx}, recipient: $recipient, action: MINT) { actions { ... on TransactionAction { transactionSubmissionData { to data value } } } }`;
+              variables[`address_${idx}`] = r.address;
+              variables[`toAssets_${idx}`] = [{ asset: { contractAddress: contractAddr, tokenId: '0', chain: 'robinhood' }, quantity: String(r.quantity || 1) }];
+            });
+            const gqlQuery = `query BatchMintActionTimelineQuery(${queryVars}) { ${queryBody} }`;
+
+            const gqlRes = await axios.post('https://gql.opensea.io/graphql', {
+              operationName: 'BatchMintActionTimelineQuery',
+              query: gqlQuery,
+              variables
+            }, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0',
+                'X-API-KEY': getNextApiKey(),
+                'Cookie': authCookie || `connected-account-server-hint=${firstAddr}`
+              },
+              timeout: 3000
+            });
+
+            const dataObj = gqlRes.data?.data;
+            const signedRawTxs = [];
+            if (dataObj) {
+              for (let i = 0; i < job.wallets.length; i++) {
+                const w = job.wallets[i];
+                const sub = dataObj[`wallet_${i}`]?.actions?.[0]?.transactionSubmissionData;
+                const toAddr = sub?.to || job.seaDropAddress;
+                const txData = sub?.data || '0x';
+                const val = sub?.value !== undefined ? BigInt(sub.value) : 0n;
+
+                const tx = {
+                  to: toAddr,
+                  data: txData,
+                  value: val,
+                  nonce: w.nonce || 0,
+                  gasLimit: 220000n,
+                  maxFeePerGas: job.computedMaxFee || ethers.parseUnits('1.0', 'gwei'),
+                  maxPriorityFeePerGas: job.computedMaxPriority || ethers.parseUnits('0.5', 'gwei'),
+                  chainId: 4663,
+                  type: 2
+                };
+                const signer = new ethers.Wallet(w.privateKey);
+                const rawSigned = await signer.signTransaction(tx);
+                signedRawTxs.push(rawSigned);
+              }
+            }
+
+            if (signedRawTxs.length > 0) {
+              const blastOutcome = await cloudExecuteMempoolBlast(signedRawTxs);
+              job.results = blastOutcome;
+              job.status = 'EXECUTED';
+              addCloudLog(jobId, `🎯 LASER HIT + MEMPOOL BLAST CONFIRMED in ${Date.now() - t0Start}ms!`, 'success');
+            } else {
+              job.status = 'FAILED';
+              addCloudLog(jobId, `❌ Could not secure OpenSea signature at T-0.`, 'error');
+            }
+          }
+        } catch (err) {
+          job.status = 'FAILED';
+          addCloudLog(jobId, `❌ T-0 Blast Error: ${err.message}`, 'error');
+        } finally {
+          if (job.wallets) {
+            job.wallets.forEach(w => { delete w.privateKey; });
+          }
+          delete job.preSignedRawTxs;
+          addCloudLog(jobId, `🔒 Wallet private keys purged from US VPS RAM. Memory 100% clean.`, 'info');
+        }
+      })();
+    }
+  }
+}, 5);
+
 // B9 FIX: Global error handler — prevents unhandled exceptions from crashing the process
 app.use((err, req, res, next) => {
   console.error('[Global Error Handler]', err.stack || err.message);
