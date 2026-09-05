@@ -277,7 +277,7 @@ const EXPLORER_APIS = {
 };
 
 const US_CLOUD_VPS_URL = 'http://129.80.65.56:3001';
-const BACKEND_BASE = import.meta.env.VITE_BACKEND_URL || ((typeof window !== 'undefined' && window.location.protocol === 'https:') ? 'https://api.aeromint.xyz' : US_CLOUD_VPS_URL);
+const BACKEND_BASE = import.meta.env.VITE_BACKEND_URL || ((typeof window !== 'undefined' && window.location.protocol === 'https:') ? '' : US_CLOUD_VPS_URL);
 
 async function apiFetch(path, options = {}) {
   try {
