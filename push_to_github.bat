@@ -14,6 +14,8 @@ if exist "frontend\src" (
     if exist "public" xcopy /E /Y /I "public\*" "frontend\public\" >nul
     if exist "index.html" copy /Y "index.html" "frontend\index.html" >nul
     if exist "vite.config.js" copy /Y "vite.config.js" "frontend\vite.config.js" >nul
+    if exist "vercel.json" copy /Y "vercel.json" "frontend\vercel.json" >nul
+    if exist "package.json" copy /Y "package.json" "frontend\package.json" >nul
     echo      Done! Frontend synced perfectly.
 )
 

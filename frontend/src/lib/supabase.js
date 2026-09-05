@@ -7,9 +7,8 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishabl
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey && supabaseUrl.startsWith('https://'));
 
 // Dynamic Backend Base URL pointing to Cloud API or US VPS
-export const BACKEND_BASE = import.meta.env.VITE_BACKEND_URL || ((typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
-  ? 'http://localhost:3001'
-  : (typeof window !== 'undefined' && window.location.protocol === 'https:' ? '' : 'http://129.80.65.56:3001'));
+export const BACKEND_BASE = import.meta.env.VITE_BACKEND_URL || ((typeof window !== 'undefined' && window.location.protocol === 'https:') ? '' : 'http://129.80.65.56:3001');
+export const IS_BACKEND_AVAILABLE = typeof window !== 'undefined' && (BACKEND_BASE !== null && BACKEND_BASE !== undefined);
 
 // Supabase client instance
 export const supabase = isSupabaseConfigured
