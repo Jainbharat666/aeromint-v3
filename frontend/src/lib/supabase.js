@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Read Vite environment variables with production fallback
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://lcblbjpwvlgmihvlfsdm.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_jK7FN09yg4OETrdlfsB-kQ_QfOwzVF1';
+// Read Vite environment variables with production fallback (Dedicated AeroMint V3 Database)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://zfsyokzedsdofmtmjtqt.supabase.co';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_GPW6AVq_IUmR3r0hq4De-w_OViDAsSi';
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey && supabaseUrl.startsWith('https://'));
 

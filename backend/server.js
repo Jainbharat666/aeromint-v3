@@ -72,9 +72,9 @@ function getNextOpenseaKey() {
 
 const OPENSEA_API_KEY = OPENSEA_API_KEYS[0] || '';
 
-// Supabase PostgreSQL Cloud Config
-const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://lcblbjpwvlgmihvlfsdm.supabase.co').replace(/\/$/, '');
-const SUPABASE_KEY = process.env.SUPABASE_KEY || 'sb_publishable_jK7FN09yg4OETrdlfsB-kQ_QfOwzVF1';
+// Supabase PostgreSQL Cloud Config (Dedicated AeroMint V3 Database)
+const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfsyokzedsdofmtmjtqt.supabase.co').replace(/\/$/, '');
+const SUPABASE_KEY = process.env.SUPABASE_KEY || 'sb_publishable_GPW6AVq_IUmR3r0hq4De-w_OViDAsSi';
 
 const supabaseHeaders = {
   apikey: SUPABASE_KEY,
