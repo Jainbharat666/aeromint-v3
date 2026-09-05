@@ -47,6 +47,9 @@ echo      [OK] server.js uploaded successfully!
 if exist "%ROOT%\backend\package.json" (
     scp -i "%SSH_KEY%" -o StrictHostKeyChecking=no "%ROOT%\backend\package.json" %VPS_USER%@%VPS_HOST%:%REMOTE_DIR%/package.json > nul 2>&1
 )
+if exist "%ROOT%\backend\.env" (
+    scp -i "%SSH_KEY%" -o StrictHostKeyChecking=no "%ROOT%\backend\.env" %VPS_USER%@%VPS_HOST%:%REMOTE_DIR%/.env > nul 2>&1
+)
 if exist "%ROOT%\backend\utils" (
     scp -i "%SSH_KEY%" -o StrictHostKeyChecking=no -r "%ROOT%\backend\utils" %VPS_USER%@%VPS_HOST%:%REMOTE_DIR%/ > nul 2>&1
 )
@@ -74,4 +77,4 @@ echo    Location: Ashburn, Virginia (US East)
 echo    Endpoint: http://%VPS_HOST%:3001
 echo ====================================================
 echo.
-pause
+if not "%1"=="--auto" pause

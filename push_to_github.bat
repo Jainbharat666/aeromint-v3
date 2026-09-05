@@ -62,5 +62,28 @@ echo.
 echo ====================================================
 echo   🎉 DONE! AeroMint V3 code synced and pushed to:
 echo   https://github.com/Jainbharat666/aeromint-v3
+echo   (Vercel will auto-deploy the live website in ~15s)
 echo ====================================================
-pause
+
+if "%1"=="--auto" (
+    if exist "%~dp0push_to_vps.bat" (
+        echo.
+        echo [AUTO] Deploying backend to US Cloud VPS...
+        call "%~dp0push_to_vps.bat" --auto
+    )
+    goto finish
+)
+
+echo.
+set PUSH_VPS=Y
+set /p PUSH_VPS="🚀 Do you also want to deploy this backend to US Cloud VPS? (Y/N, default Y): "
+if /i "%PUSH_VPS%"=="" set PUSH_VPS=Y
+if /i "%PUSH_VPS%"=="Y" (
+    if exist "%~dp0push_to_vps.bat" (
+        echo.
+        call "%~dp0push_to_vps.bat"
+    )
+)
+
+:finish
+if not "%1"=="--auto" pause
