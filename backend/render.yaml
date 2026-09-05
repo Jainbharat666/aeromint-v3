@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: aeromint-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: OPENSEA_API_KEY
+        value: 5f32ee9b98e84ea184a514f975ad4f3f
+      - key: SUPABASE_URL
+        value: https://lcblbjpwvlgmihvlfsdm.supabase.co
+      - key: SUPABASE_KEY
+        value: sb_publishable_jK7FN09yg4OETrdlfsB-kQ_QfOwzVF1

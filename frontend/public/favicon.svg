@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="rocketBody" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="30%" stop-color="#e0f2fe" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+    <linearGradient id="wingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+    <linearGradient id="flameGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="40%" stop-color="#f97316" />
+      <stop offset="100%" stop-color="#dc2626" />
+    </linearGradient>
+  </defs>
+
+  <!-- Exhaust Propulsion Fire -->
+  <path d="M18 46 C15 53, 9 58, 6 62 C11 59, 16 53, 19 49 C21 47, 23 45, 24 42 C20 42, 18 45, 18 46 Z" fill="url(#flameGrad)" />
+  <path d="M19 44 C17 48, 12 52, 10 55 C13 53, 16 48, 20 45 Z" fill="#ffffff" opacity="0.9" />
+
+  <!-- Left Fin Wing -->
+  <path d="M23 41 L14 47 C13 48, 11 47, 12 45 L17 33 Z" fill="url(#wingGrad)" />
+
+  <!-- Right Fin Wing -->
+  <path d="M41 23 L47 14 C48 13, 47 11, 45 12 L33 17 Z" fill="url(#wingGrad)" />
+
+  <!-- Main Rocket Fuselage -->
+  <path d="M48 16 C39 7, 27 16, 23 23 C19 30, 20 37, 23 41 C27 44, 34 45, 41 41 C48 37, 57 25, 48 16 Z" fill="url(#rocketBody)" />
+
+  <!-- Rocket Nose Tip -->
+  <path d="M48 16 C53 11, 58 6, 58 6 C58 6, 53 11, 48 16 Z" fill="#2563eb" />
+  <path d="M43 21 C48 16, 58 6, 58 6 C58 6, 48 16, 43 21 Z" stroke="#2563eb" stroke-width="2" stroke-linecap="round" />
+
+  <!-- Rocket Porthole Cockpit Glass -->
+  <circle cx="35" cy="29" r="6" fill="#0f172a" stroke="#38bdf8" stroke-width="1.8" />
+  <circle cx="36" cy="28" r="2.8" fill="#38bdf8" opacity="0.95" />
+</svg>

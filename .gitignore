@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+.env
+*.exe
+*.dll
+*.log
+*.key
+.vps_keys/
+.DS_Store
+AeroMint-Bot-Windows/
+*.tar.gz
+backups/
+.git_token
