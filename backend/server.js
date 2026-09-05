@@ -2246,11 +2246,11 @@ app.all('/api/benchmark-rpcs', async (req, res) => {
       try { host = new URL(url).hostname; } catch (e) { host = url; }
 
       // 1. Measure raw TCP socket connection time from Ashburn, VA (true network edge latency)
-      const tcpPing = await measureTcpPing(host, 443) || 1.8;
+      const tcpPing = await measureTcpPing(host, 443);
 
       // 2. Measure JSON-RPC blockNumber execution latency
       const start = Date.now();
-      let execLatency = tcpPing;
+      let execLatency = null;
       let blockNum = null;
       try {
         const rpcRes = await axios.post(url, {
@@ -2262,10 +2262,11 @@ app.all('/api/benchmark-rpcs', async (req, res) => {
         execLatency = Math.max(1, Date.now() - start);
         blockNum = rpcRes.data?.result ? parseInt(rpcRes.data.result, 16) : null;
       } catch (err) {
-        execLatency = Date.now() - start;
+        execLatency = null;
       }
 
-      const finalPing = Math.round(tcpPing * 10) / 10;
+      const isOnline = blockNum !== null && typeof blockNum === 'number' && !isNaN(blockNum);
+      const finalPing = isOnline ? (tcpPing ? Math.round(tcpPing * 10) / 10 : (execLatency || 40)) : null;
 
       return {
         url,
@@ -2273,7 +2274,7 @@ app.all('/api/benchmark-rpcs', async (req, res) => {
         networkPingMs: finalPing,
         latencyMs: execLatency,
         blockNumber: blockNum,
-        status: execLatency < 2500 ? 'online' : 'offline'
+        status: isOnline ? 'online' : 'offline'
       };
     }));
 
