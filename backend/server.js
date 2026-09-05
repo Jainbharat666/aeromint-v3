@@ -292,6 +292,20 @@ async function dbUpsertInvite(inviteObj) {
     });
     return (res.data && res.data.length > 0) ? res.data[0] : inviteObj;
   } catch (e) {
+    if (e.response?.data?.message?.includes('max_mints_limit')) {
+      const copy = { ...inviteObj };
+      delete copy.max_mints_limit;
+      try {
+        const retryRes = await axios.post(`${SUPABASE_URL}/rest/v1/app_invites`, copy, {
+          headers: { ...supabaseHeaders, Prefer: 'resolution=merge-duplicates,return=representation' },
+          timeout: 8000
+        });
+        return (retryRes.data && retryRes.data.length > 0) ? retryRes.data[0] : copy;
+      } catch (retryErr) {
+        console.error('[Supabase DB Error - UpsertInvite Retry]:', retryErr.response?.data || retryErr.message);
+        throw retryErr;
+      }
+    }
     console.error('[Supabase DB Error - UpsertInvite]:', e.response?.data || e.message);
     throw e;
   }
@@ -380,7 +394,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 
     if (!inviteRecord && (cleanCode === 'AERO-VIP-ACCESS-2026' || cleanCode === 'AERO2026' || isOwner)) {
       inviteRecord = {
-        id: `inv_seed_${Date.now()}`,
+        id: crypto.randomUUID(),
         invite_code: cleanCode,
         validity_days: 365,
         max_mints_limit: 0,
@@ -963,7 +977,7 @@ app.post('/api/invites/create', adminAuthMiddleware, async (req, res) => {
 
   const clean = code.trim().toUpperCase().replace(/[\u2010-\u2015\u2212\uFF0D]/g, '-');
   const newInvite = {
-    id: `inv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    id: crypto.randomUUID(),
     invite_code: clean,
     validity_days: parseInt(validityDays) || 30,
     max_mints_limit: parseInt(maxMintsLimit) || 0,
@@ -973,8 +987,12 @@ app.post('/api/invites/create', adminAuthMiddleware, async (req, res) => {
     created_at: new Date().toISOString()
   };
 
-  const saved = await dbUpsertInvite(newInvite);
-  res.json({ success: true, invite: saved });
+  try {
+    const saved = await dbUpsertInvite(newInvite);
+    return res.json({ success: true, invite: saved });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.response?.data?.message || err.message });
+  }
 });
 
 // Toggle invite active
