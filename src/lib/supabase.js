@@ -452,11 +452,13 @@ export async function fetchCustomRpcsFromCloud(userId) {
 function getAuthHeaders() {
   let token = localStorage.getItem('aero_session_token') || '';
   let userEmail = '';
+  let userId = '';
   try {
     const saved = localStorage.getItem('aero_auth_session');
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed?.user?.email) userEmail = parsed.user.email;
+      if (parsed?.user?.id) userId = parsed.user.id;
       if (!token && parsed?.user?.id) token = parsed.user.id;
     }
   } catch (e) {}
@@ -464,6 +466,8 @@ function getAuthHeaders() {
   const headers = { 'Content-Type': 'application/json' };
   const authVal = token || userEmail || 'jainbharat666@gmail.com';
   headers['Authorization'] = `Bearer ${authVal}`;
+  if (userEmail) headers['x-user-email'] = userEmail;
+  if (userId) headers['x-user-id'] = userId;
   return headers;
 }
 
