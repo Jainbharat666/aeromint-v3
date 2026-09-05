@@ -2455,10 +2455,12 @@ app.post('/api/cloud-mint/cancel', adminAuthMiddleware, async (req, res) => {
   if (jobId && cloudScheduledJobs.has(jobId)) {
     const job = cloudScheduledJobs.get(jobId);
     if (job.wallets) job.wallets.forEach(w => { delete w.privateKey; });
+    delete job.preSignedRawTxs;
     job.status = 'CANCELLED';
-    addCloudLog(jobId, 'Job CANCELLED by user.', 'warning');
-    cloudScheduledJobs.delete(jobId);
-    return res.json({ success: true, message: 'Cloud scheduled job cancelled.' });
+    addCloudLog(jobId, '🛑 Job CANCELLED by user. RAM memory wiped clean.', 'warning');
+    // Retain cancelled state for 60s so frontend polling cleanly registers status: 'CANCELLED'
+    setTimeout(() => { cloudScheduledJobs.delete(jobId); }, 60000);
+    return res.json({ success: true, message: 'Cloud scheduled job cancelled and RAM purged.' });
   }
   return res.json({ success: true, message: 'Job not found or already executed.' });
 });

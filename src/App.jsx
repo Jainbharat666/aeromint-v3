@@ -9575,6 +9575,33 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: '1rem', fontWeight: 'bold', color: '#ffffff' }}>
                       {countdown}
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playSound('click');
+                        setIsScheduled(false);
+                        cancelCloudMintJob();
+                        log('🛑 [EMERGENCY ABORT] Scheduled mint aborted by user! US Cloud memory and pre-signed transactions purged.', 'warning');
+                      }}
+                      style={{
+                        padding: '0.2rem 0.6rem',
+                        fontSize: '0.72rem',
+                        background: 'rgba(239, 68, 68, 0.25)',
+                        border: '1px solid #ef4444',
+                        borderRadius: '4px',
+                        color: '#fca5a5',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem'
+                      }}
+                      title="Instantly abort scheduled mint, cancel US Cloud job, and purge private keys from VPS RAM"
+                    >
+                      <span>🚨</span>
+                      <span>ABORT</span>
+                    </button>
                   </div>
                 </div>
               )}
