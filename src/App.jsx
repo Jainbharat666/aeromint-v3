@@ -1304,6 +1304,11 @@ function App() {
       const stageToUse = overrideStage || seaDropStage || selectedTargetStage?.type || 'public';
       const priceToUse = overridePrice || pricePerNft || '0.0';
 
+      // Collect user's candidate RPC endpoints (including custom user nodes and fleet nodes)
+      const activeEndpoints = rpcEndpoints.filter(r => r.latency !== 'Offline' && (r.network === selectedNetworkKey || !r.network));
+      const sorted = [...activeEndpoints].sort((a, b) => (parseInt(a.latency) || 999) - (parseInt(b.latency) || 999));
+      const targetRpcs = sorted.length > 0 ? sorted : activeEndpoints;
+
       const payload = {
         targetEpochMs: Number(targetEpochMs),
         slug: collectionPreviewRef.current?.slug || collectionPreview?.slug || customSlugInput || '',
@@ -1313,6 +1318,10 @@ function App() {
         pricePerNft: String(priceToUse),
         quantity: Number(quantity) || 1,
         gasSpeed: gasSpeed || 'hyped',
+        blastNodeCount: Number(blastNodeCount) || 3,
+        rpcMode: rpcMode || 'blast',
+        rpcUrls: targetRpcs.map(r => ({ name: r.name, url: r.url })),
+        userId: currentUser?.id || null,
         wallets: workerWallets.map(w => ({
           address: w.address,
           privateKey: w.privateKey,
@@ -1321,7 +1330,7 @@ function App() {
         }))
       };
 
-      log(`☁️ [US CLOUD SCHEDULER] Arming autonomous mint job on US Cloud VPS (Ashburn, VA)...`, 'info');
+      log(`☁️ [US CLOUD SCHEDULER] Arming job on US Cloud VPS with Top ${Number(blastNodeCount) || 3} Multi-Blast Model (${targetRpcs.length} candidate RPCs pooled)...`, 'info');
 
       const headers = {
         'Content-Type': 'application/json',

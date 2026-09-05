@@ -2332,13 +2332,15 @@ function addCloudLog(jobId, message, type = 'info') {
   console.log(`[CloudScheduler:${jobId}] ${entry}`);
 }
 
-const CLOUD_RPCS = [
+const DEFAULT_FALLBACK_RPCS = [
   'https://rpc.mainnet.chain.robinhood.com',
   'https://robinhood-mainnet.g.alchemy.com/v2/alch_FtrEfyyJYzEBZ0SQ3ctbJ'
 ];
 
-async function cloudExecuteMempoolBlast(rawSignedTxs) {
+async function cloudExecuteMempoolBlast(rawSignedTxs, targetRpcs = null) {
   const blastStart = Date.now();
+  const blastUrls = Array.isArray(targetRpcs) && targetRpcs.length > 0 ? targetRpcs : DEFAULT_FALLBACK_RPCS;
+
   const blastResults = await Promise.all(rawSignedTxs.map(async (rawTx) => {
     const txHash = ethers.keccak256(rawTx);
     const payload = {
@@ -2348,7 +2350,7 @@ async function cloudExecuteMempoolBlast(rawSignedTxs) {
       id: Math.floor(Math.random() * 1000000)
     };
 
-    const nodeOutcomes = await Promise.allSettled(CLOUD_RPCS.map(url =>
+    const nodeOutcomes = await Promise.allSettled(blastUrls.map(url =>
       axios.post(url, payload, { timeout: 3500, headers: { 'Content-Type': 'application/json' } })
     ));
 
@@ -2367,7 +2369,7 @@ async function cloudExecuteMempoolBlast(rawSignedTxs) {
       txHash,
       success: acceptedCount > 0,
       nodesAccepted: acceptedCount,
-      totalNodes: CLOUD_RPCS.length,
+      totalNodes: blastUrls.length,
       error: acceptedCount === 0 ? lastError : null
     };
   }));
@@ -2392,7 +2394,11 @@ app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
       customMaxFee,
       customPriorityFee,
       targetEpochMs,
-      wallets = []
+      wallets = [],
+      rpcUrls = [],
+      blastNodeCount = 3,
+      rpcMode = 'blast',
+      userId
     } = req.body;
 
     if (!targetEpochMs || isNaN(Number(targetEpochMs))) {
@@ -2402,9 +2408,60 @@ app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'At least one wallet is required' });
     }
 
+    // 🌐 Aggregate Candidate RPC Nodes (Client + User Custom Cloud + Fleet Admin + System)
+    const candidateRpcs = [];
+    const seenUrls = new Set();
+
+    const addRpcCandidate = (url, name) => {
+      if (!url || typeof url !== 'string') return;
+      const cleanUrl = url.trim();
+      const norm = cleanUrl.toLowerCase().replace(/\/$/, '');
+      if (!norm.startsWith('http') || seenUrls.has(norm)) return;
+      seenUrls.add(norm);
+      candidateRpcs.push({ url: cleanUrl, name: name || 'Node' });
+    };
+
+    // 1. Client-provided active RPC endpoints (sorted / benchmarked by user)
+    if (Array.isArray(rpcUrls)) {
+      rpcUrls.forEach(r => {
+        if (typeof r === 'string') addRpcCandidate(r, 'Client Node');
+        else if (r && r.url) addRpcCandidate(r.url, r.name);
+      });
+    }
+
+    // 2. User-specific custom RPCs from Cloud Database
+    const effectiveUid = userId || req.authenticatedUser?.id;
+    if (effectiveUid) {
+      try {
+        const userCfg = await dbGetUserConfig(effectiveUid);
+        if (Array.isArray(userCfg?.custom_rpcs)) {
+          userCfg.custom_rpcs.forEach(cr => {
+            if (cr && cr.url) addRpcCandidate(cr.url, cr.name || 'User Custom Node');
+          });
+        }
+      } catch (_) {}
+    }
+
+    // 3. Admin Fleet RPCs for Robinhood
+    try {
+      const fleet = await dbGetCloudFleet('robinhood');
+      if (Array.isArray(fleet)) {
+        fleet.forEach(fr => {
+          if (fr && fr.url && fr.is_active !== false) addRpcCandidate(fr.url, fr.name || 'Admin Fleet Node');
+        });
+      }
+    } catch (_) {}
+
+    // 4. Default Fallback Nodes
+    DEFAULT_FALLBACK_RPCS.forEach(u => addRpcCandidate(u, 'System Sequencer'));
+
+    const effectiveBlastCount = Number(blastNodeCount) || 3;
+    const initialBlastUrls = candidateRpcs.slice(0, effectiveBlastCount).map(r => r.url);
+
     const jobId = `cjob_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const job = {
       id: jobId,
+      userId: effectiveUid || 'guest',
       slug: slug ? slug.trim() : '',
       contractAddress: contractAddress || '',
       seaDropAddress: seaDropAddress || '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
@@ -2415,6 +2472,10 @@ app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
       customMaxFee,
       customPriorityFee,
       targetEpochMs: Number(targetEpochMs),
+      candidateRpcs,
+      blastNodeCount: effectiveBlastCount,
+      rpcMode: rpcMode || 'blast',
+      activeBlastRpcs: initialBlastUrls,
       wallets: wallets.map(w => ({
         address: w.address,
         privateKey: w.privateKey,
@@ -2435,14 +2496,16 @@ app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
     };
 
     cloudScheduledJobs.set(jobId, job);
-    addCloudLog(jobId, `Job ARMED on US Cloud VPS (Ashburn, VA)! Target: ${new Date(job.targetEpochMs).toISOString()} | Wallets: ${job.wallets.length}`, 'success');
+    addCloudLog(jobId, `Job ARMED on US Cloud VPS! Target: ${new Date(job.targetEpochMs).toISOString()} | Wallets: ${job.wallets.length} | Multi-Blast: Top ${effectiveBlastCount} Nodes Active (${candidateRpcs.length} candidate nodes pooled)`, 'success');
 
     return res.json({
       success: true,
       jobId,
       status: 'ARMED',
       targetEpochMs: job.targetEpochMs,
-      message: 'Job successfully scheduled in US Cloud VPS memory.'
+      blastNodeCount: effectiveBlastCount,
+      candidateRpcsCount: candidateRpcs.length,
+      message: `Job scheduled with Top ${effectiveBlastCount} RPC multi-blast model.`
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -2509,14 +2572,45 @@ setInterval(async () => {
 
     const diff = job.targetEpochMs - now;
 
-    // ⚡ T-25s: PRE-WARM RPC SOCKETS
+    // ⚡ T-25s: PRE-WARM & BENCHMARK USER'S CANDIDATE RPCs FROM ASHBURN EDGE
     if (diff <= 25000 && diff > 20000 && !job.warmedT25) {
       job.warmedT25 = true;
       job.status = 'WARMING_T25';
-      addCloudLog(jobId, 'T-25s: Probing Robinhood RPC sockets from Ashburn datacenter...', 'info');
-      CLOUD_RPCS.forEach(url => {
-        axios.post(url, { jsonrpc: '2.0', method: 'eth_blockNumber', params: [], id: 1 }, { timeout: 2000 }).catch(() => {});
-      });
+      const rpcCount = job.candidateRpcs?.length || 0;
+      addCloudLog(jobId, `T-25s: Benchmarking & warming ${rpcCount} candidate RPC nodes from Ashburn...`, 'info');
+
+      (async () => {
+        try {
+          const list = Array.isArray(job.candidateRpcs) && job.candidateRpcs.length > 0
+            ? job.candidateRpcs
+            : DEFAULT_FALLBACK_RPCS.map(u => ({ url: u, name: 'System' }));
+
+          const benchmarkResults = await Promise.allSettled(list.map(async (rpc) => {
+            const start = Date.now();
+            await axios.post(rpc.url, { jsonrpc: '2.0', method: 'eth_blockNumber', params: [], id: 1 }, { timeout: 2000 });
+            return { url: rpc.url, name: rpc.name || 'Node', latencyMs: Date.now() - start };
+          }));
+
+          const validNodes = [];
+          benchmarkResults.forEach(r => {
+            if (r.status === 'fulfilled' && r.value?.latencyMs !== undefined) {
+              validNodes.push(r.value);
+            }
+          });
+
+          validNodes.sort((a, b) => a.latencyMs - b.latencyMs);
+
+          const count = Math.max(1, Math.min(job.blastNodeCount || 3, validNodes.length));
+          const topN = validNodes.slice(0, count);
+          if (topN.length > 0) {
+            job.activeBlastRpcs = topN.map(r => r.url);
+            const summary = topN.map(r => `${r.name}: ${r.latencyMs}ms`).join(' | ');
+            addCloudLog(jobId, `T-25s: Top ${topN.length} lowest-latency nodes locked in Ashburn! [${summary}]`, 'success');
+          }
+        } catch (e) {
+          addCloudLog(jobId, `T-25s Warmup Notice: ${e.message}`, 'warning');
+        }
+      })();
     }
 
     // ⚡ T-20s: OPENSEA SIWE PRE-AUTHENTICATION (Virginia Datacenter Edge)
@@ -2536,19 +2630,24 @@ setInterval(async () => {
                 });
                 const nonce = nonceRes.data?.nonce;
                 if (!nonce) return;
-                const isoTime = new Date().toISOString();
-                const message = `opensea.io wants you to sign in with your Ethereum account:\n${w.address.toLowerCase()}\n\nSign in with Ethereum to the app.\n\nURI: https://opensea.io\nVersion: 1\nChain ID: 4663\nNonce: ${nonce}\nIssued At: ${isoTime}`;
-                const walletObj = new ethers.Wallet(w.privateKey);
-                const signature = await walletObj.signMessage(message);
+
+                const issuedAt = new Date().toISOString();
+                const siweMsg = `opensea.io wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in with Ethereum to the app.\n\nURI: https://opensea.io\nVersion: 1\nChain ID: 4663\nNonce: ${nonce}\nIssued At: ${issuedAt}`;
+                
+                const signer = new ethers.Wallet(w.privateKey);
+                const signature = await signer.signMessage(siweMsg);
+
                 const verifyRes = await axios.post('https://opensea.io/__api/auth/siwe/verify', {
-                  message, signature, chainArch: 'ETHEREUM'
+                  message: siweMsg,
+                  signature
                 }, {
-                  headers: { 'User-Agent': 'Mozilla/5.0', Referer: referer, Origin: 'https://opensea.io', 'Content-Type': 'application/json' },
+                  headers: { 'User-Agent': 'Mozilla/5.0', Referer: referer },
                   timeout: 4000
                 });
+
                 const rawCookies = verifyRes.headers['set-cookie'] || [];
-                const cookieHeader = rawCookies.map(c => c.split(';')[0]).join('; ');
-                const fullCookies = `${cookieHeader}; connected-account-server-hint=${w.address.toLowerCase()}`;
+                const parsedCookies = rawCookies.map(c => c.split(';')[0]).join('; ');
+                const fullCookies = `${parsedCookies}; connected-account-server-hint=${w.address.toLowerCase()}`;
                 walletSessionCookies.set(w.address.toLowerCase(), fullCookies);
               } catch (_) {}
             }));
@@ -2625,7 +2724,8 @@ setInterval(async () => {
       (async () => {
         try {
           addCloudLog(jobId, 'T-10s: Pre-flight Balance Audit across worker wallets...', 'info');
-          const provider = new ethers.JsonRpcProvider('https://rpc.mainnet.chain.robinhood.com');
+          const primaryRpc = job.activeBlastRpcs?.[0] || 'https://rpc.mainnet.chain.robinhood.com';
+          const provider = new ethers.JsonRpcProvider(primaryRpc);
           let cleared = 0;
           await Promise.all(job.wallets.map(async (w) => {
             try {
@@ -2648,7 +2748,8 @@ setInterval(async () => {
       (async () => {
         try {
           addCloudLog(jobId, 'T-5s: Pre-fetching Dynamic Gas and Nonces in RAM...', 'info');
-          const provider = new ethers.JsonRpcProvider('https://rpc.mainnet.chain.robinhood.com');
+          const primaryRpc = job.activeBlastRpcs?.[0] || 'https://rpc.mainnet.chain.robinhood.com';
+          const provider = new ethers.JsonRpcProvider(primaryRpc);
           const feeData = await provider.getFeeData().catch(() => null);
           const baseGas = feeData?.maxFeePerGas || feeData?.gasPrice || 100000000n;
           
@@ -2718,10 +2819,10 @@ setInterval(async () => {
         addCloudLog(jobId, `T-0 TRIGGER ENGAGED! Executing from Ashburn Datacenter at target millisecond!`, 'success');
         try {
           if (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) {
-            const blastOutcome = await cloudExecuteMempoolBlast(job.preSignedRawTxs);
+            const blastOutcome = await cloudExecuteMempoolBlast(job.preSignedRawTxs, job.activeBlastRpcs);
             job.results = blastOutcome;
             job.status = 'EXECUTED';
-            addCloudLog(jobId, `🎯 LOCKSTEP MEMPOOL BLAST CONFIRMED in ${blastOutcome.blastDurationMs}ms! Dispatched directly to Robinhood nodes!`, 'success');
+            addCloudLog(jobId, `🎯 LOCKSTEP MEMPOOL BLAST CONFIRMED in ${blastOutcome.blastDurationMs}ms! Dispatched directly to Top ${job.activeBlastRpcs.length} Robinhood nodes!`, 'success');
           } else {
             addCloudLog(jobId, `⚡ Engaging 6-Key Staggered Laser Pipeline from Ashburn Edge...`, 'warning');
             const contractAddr = job.contractAddress;
@@ -2784,10 +2885,10 @@ setInterval(async () => {
             }
 
             if (signedRawTxs.length > 0) {
-              const blastOutcome = await cloudExecuteMempoolBlast(signedRawTxs);
+              const blastOutcome = await cloudExecuteMempoolBlast(signedRawTxs, job.activeBlastRpcs);
               job.results = blastOutcome;
               job.status = 'EXECUTED';
-              addCloudLog(jobId, `🎯 LASER HIT + MEMPOOL BLAST CONFIRMED in ${Date.now() - t0Start}ms!`, 'success');
+              addCloudLog(jobId, `🎯 LASER HIT + MEMPOOL BLAST CONFIRMED in ${Date.now() - t0Start}ms! Dispatched to Top ${job.activeBlastRpcs.length} nodes!`, 'success');
             } else {
               job.status = 'FAILED';
               addCloudLog(jobId, `❌ Could not secure OpenSea signature at T-0.`, 'error');
