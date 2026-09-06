@@ -2636,10 +2636,11 @@ async function fetchOpenSeaBatchCalldata(job, apiKeyOverride = null) {
     const cookieHeader = authCookie ? `${authCookie}; connected-account-server-hint=${firstAddr}` : `connected-account-server-hint=${firstAddr}`;
     const apiKeyToUse = apiKeyOverride || getNextOpenseaKey() || '';
 
+    const chain = (job.network || 'robinhood').toLowerCase();
     let queryVars = `$fromAssets: [AssetQuantityInput!]!, $recipient: Address`;
     let queryBody = '';
     const variables = {
-      fromAssets: [{ asset: { contractAddress: "0x0000000000000000000000000000000000000000", chain: 'robinhood' } }],
+      fromAssets: [{ asset: { contractAddress: "0x0000000000000000000000000000000000000000", chain } }],
       recipient: firstAddr
     };
 
@@ -2667,7 +2668,7 @@ async function fetchOpenSeaBatchCalldata(job, apiKeyOverride = null) {
     errors { __typename }
   }`;
       variables[`address_${idx}`] = r.address;
-      variables[`toAssets_${idx}`] = [{ asset: { contractAddress: contractAddr, tokenId: '0', chain: 'robinhood' }, quantity: String(r.quantity || 1) }];
+      variables[`toAssets_${idx}`] = [{ asset: { contractAddress: contractAddr, tokenId: '0', chain }, quantity: String(r.quantity || 1) }];
     });
 
     const gqlQuery = `query BatchMintActionTimelineQuery(${queryVars}) {\n${queryBody}\n}`;
@@ -3048,11 +3049,38 @@ setInterval(async () => {
                 staggerTimers.push(t);
               });
 
-              // Fast micro-poll loop (10ms resolution) waiting for all signatures
+              // ⚡ Failsafe Extended Cadence: Continuous 100ms pulser for creator/OpenSea delayed stages
+              let followupTimer = null;
+              const fallbackStartTimer = setTimeout(() => {
+                let followupCount = 0;
+                followupTimer = setInterval(async () => {
+                  if (allSecured() || followupCount > 80) {
+                    if (followupTimer) clearInterval(followupTimer);
+                    return;
+                  }
+                  const key = keysToUse[followupCount % keysToUse.length];
+                  try {
+                    const m = await fetchOpenSeaBatchCalldata(job, key);
+                    if (m && m.size > 0) {
+                      for (const [addr, sub] of m.entries()) {
+                        if (!job.signedCalldataMap.has(addr)) {
+                          job.signedCalldataMap.set(addr, sub);
+                        }
+                      }
+                      addCloudLog(jobId, `🎯 [FAILSAFE PULSE #${followupCount + 1} HIT] Signature secured via Key at +${Date.now() - t0Start}ms!`, 'success');
+                    }
+                  } catch (_) {}
+                  followupCount++;
+                }, 100);
+              }, 250);
+              staggerTimers.push(fallbackStartTimer);
+
+              // Fast micro-poll loop (10ms resolution) waiting for all signatures (up to 8000ms for delayed drops)
               await new Promise((resolve) => {
                 const checkInterval = setInterval(() => {
-                  if (allSecured() || Date.now() - t0Start > 4000) {
+                  if (allSecured() || Date.now() - t0Start > 8000) {
                     clearInterval(checkInterval);
+                    if (followupTimer) clearInterval(followupTimer);
                     staggerTimers.forEach(t => clearTimeout(t));
                     resolve();
                   }
