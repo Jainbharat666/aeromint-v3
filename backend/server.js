@@ -2876,10 +2876,10 @@ setInterval(async () => {
                   ]);
                 } catch (_) {}
               }
-              if (!txData) txData = '0x';
+              if (!txData) continue; // M1 FIX: Skip wallets without valid calldata — never send 0x to SeaDrop
               const val = sub?.value !== undefined && sub?.value !== null 
                 ? BigInt(sub.value) 
-                : (job.pricePerNft && job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
+                : (job.pricePerNft && job.pricePerNft !== '0.0' && !isNaN(parseFloat(job.pricePerNft)) ? ethers.parseEther(parseFloat(job.pricePerNft).toFixed(18)) * BigInt(job.quantity) : 0n);
 
               // Zero-Revert Balance Protection: Clamp maxFee if wallet balance cannot support hyped priority fee
               let walletMaxFee = maxFee;
@@ -3004,9 +3004,9 @@ setInterval(async () => {
               if (!txData) continue;
 
               const toAddr = sub?.to || job.seaDropAddress;
-              const val = sub.value !== undefined && sub.value !== null
+              const val = sub?.value !== undefined && sub?.value !== null
                 ? BigInt(sub.value)
-                : (job.pricePerNft && job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
+                : (job.pricePerNft && job.pricePerNft !== '0.0' && !isNaN(parseFloat(job.pricePerNft)) ? ethers.parseEther(parseFloat(job.pricePerNft).toFixed(18)) * BigInt(job.quantity) : 0n);
 
               // Zero-Revert Balance Protection: Clamp maxFee if wallet balance cannot support hyped priority fee
               const gasLimit = 150000n + (BigInt(job.quantity || 1) * 15000n);
@@ -3068,11 +3068,24 @@ setInterval(async () => {
           }
           delete job.preSignedRawTxs;
           addCloudLog(jobId, `🔒 Wallet private keys purged from US VPS RAM. Memory 100% clean.`, 'info');
+          // M2+M3 FIX: Auto-cleanup completed jobs after 2 minutes to prevent memory leaks
+          setTimeout(() => {
+            cloudScheduledJobs.delete(jobId);
+            cloudJobLogs.delete(jobId);
+          }, 120000);
         }
       })();
     }
   }
 }, 5);
+
+// H2 FIX: Process-level crash guards — prevents ticker loop unhandled errors from killing PM2
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT EXCEPTION — Process Alive]', err.stack || err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED REJECTION — Process Alive]', reason?.stack || reason);
+});
 
 // B9 FIX: Global error handler — prevents unhandled exceptions from crashing the process
 app.use((err, req, res, next) => {
