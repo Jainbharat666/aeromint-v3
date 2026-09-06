@@ -1428,7 +1428,14 @@ function App() {
           }
 
           if (job?.status === 'EXECUTED') {
+            const acceptedTxs = (job?.results?.results || []).filter(r => r.success && r.txHash);
             log(`🎉 [US CLOUD MINT SUCCESS] Successfully executed in Ashburn, VA! Blast confirmed.`, 'success');
+            if (acceptedTxs.length > 0) {
+              acceptedTxs.forEach(r => {
+                log(`🔗 [ON-CHAIN PROOF] TX: ${r.txHash}`, 'success');
+                log(`🌐 Robinhood Explorer: https://explorer.mainnet.chain.robinhood.com/tx/${r.txHash}`, 'info');
+              });
+            }
             setIsScheduled(false);
             setCloudJobId(null);
             cloudJobIdRef.current = null;
