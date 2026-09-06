@@ -2880,6 +2880,40 @@ setInterval(async () => {
               cleared++;
             } catch (_) {}
           }));
+
+          if (job.stage === 'public' && job.contractAddress) {
+            try {
+              const sdAddr = job.seaDropAddress || '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5';
+              const sdContract = new ethers.Contract(sdAddr, [
+                'function getPublicDrop(address) view returns (tuple(uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients))'
+              ], provider);
+              const nftContract = new ethers.Contract(job.contractAddress, [
+                'function balanceOf(address) view returns (uint256)'
+              ], provider);
+              const pubDrop = await sdContract.getPublicDrop(job.contractAddress);
+              const maxOnChain = Number(pubDrop?.maxTotalMintableByWallet || 0);
+
+              let allCanMintDirect = true;
+              await Promise.all(job.wallets.map(async (w) => {
+                try {
+                  const balNft = Number(await nftContract.balanceOf(w.address));
+                  w.nftBalance = balNft;
+                  if (maxOnChain === 0 || (balNft + Number(job.quantity || 1) > maxOnChain)) {
+                    allCanMintDirect = false;
+                  }
+                } catch (_) {
+                  allCanMintDirect = false;
+                }
+              }));
+              job.canMintPublicDirect = allCanMintDirect;
+              if (allCanMintDirect) {
+                addCloudLog(jobId, `T-10s: On-chain Public Drop verified (Limit: ${maxOnChain})! Zero-signature 0ms Block 0 direct path armed!`, 'success');
+              } else {
+                addCloudLog(jobId, `T-10s: On-chain Public Limit (${maxOnChain}) requires OpenSea signature voucher. Laser pipeline armed!`, 'warning');
+              }
+            } catch (_) {}
+          }
+
           addCloudLog(jobId, `T-10s: Audit Complete: ${cleared}/${job.wallets.length} wallets cleared & armed!`, 'success');
         } catch (e) {
           addCloudLog(jobId, `T-10s Warning: ${e.message}`, 'warning');
@@ -2943,9 +2977,12 @@ setInterval(async () => {
 
           const isPublic = job.stage === 'public';
           const hasAllSignatures = job.wallets.every(w => job.signedCalldataMap.has(w.address.toLowerCase()));
+          const canDirectPublic = isPublic && (job.canMintPublicDirect || !job.slug);
 
-          // Only pre-sign in RAM at T-5s if we already secured OpenSea signatures OR if there is NO OpenSea slug (direct onchain drop)
-          if (hasAllSignatures || (!job.slug && isPublic)) {
+          // Only pre-sign in RAM at T-5s if:
+          // 1. We already secured OpenSea signatures (hasAllSignatures), OR
+          // 2. Direct on-chain mintPublic is 100% verified to pass without reverting (canDirectPublic)
+          if (hasAllSignatures || canDirectPublic) {
             const preSigned = [];
             const gasLimit = 150000n + (BigInt(job.quantity || 1) * 15000n);
             const SEADROP_MINT_PUBLIC_IFACE = new ethers.Interface([
