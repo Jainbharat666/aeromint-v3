@@ -497,23 +497,42 @@ function App() {
     if (isOwner) return;
 
     const runHeartbeat = async () => {
+      // 1. Client-Side Immediate Expiration Guard (Zero Network Latency / Auto-Logout in <=5s)
+      if (currentUser.valid_until && new Date(currentUser.valid_until) <= new Date()) {
+        log('⏳ VIP Subscription has expired. Logging out automatically...', 'error');
+        localStorage.removeItem('aerov3_auth_session');
+        localStorage.removeItem('aerov3_session_token');
+        handleLogout();
+        setAppModalState({
+          isOpen: true,
+          type: 'lock',
+          title: '⏳ Subscription Expired',
+          message: `Your VIP Subscription validity expired on ${new Date(currentUser.valid_until).toLocaleString()}. Access has been closed automatically.`,
+          icon: '⏳',
+          confirmText: 'Return to Login',
+          onConfirm: () => setAppModalState(prev => ({ ...prev, isOpen: false }))
+        });
+        return;
+      }
+
+      // 2. Real-Time Server Heartbeat Probe (Every 5 seconds)
       const status = await checkSessionHeartbeat(currentUser.email, currentUser.id);
       if (status && status.valid === false) {
         log(status.message || '🚫 Session terminated by Administrator.', 'error');
         // Instantly wipe session from memory & disk
         localStorage.removeItem('aerov3_auth_session');
+        localStorage.removeItem('aerov3_session_token');
+        handleLogout();
         setAppModalState({
           isOpen: true,
           type: 'lock',
-          title: '🚫 Access Revoked',
+          title: status.reason === 'EXPIRED_TIME' ? '⏳ Subscription Expired' : (status.reason === 'EXPIRED_MINTS' ? '🎯 Mint Quota Exhausted' : '🚫 Access Revoked'),
           message: status.message || 'Your account access has been revoked or expired by Administrator.',
-          icon: '🚫',
+          icon: status.reason === 'EXPIRED_TIME' ? '⏳' : (status.reason === 'EXPIRED_MINTS' ? '🎯' : '🚫'),
           confirmText: 'Return to Login',
-          onConfirm: () => {
-            setAppModalState(prev => ({ ...prev, isOpen: false }));
-            handleLogout();
-          }
+          onConfirm: () => setAppModalState(prev => ({ ...prev, isOpen: false }))
         });
+        return;
       } else if (status && status.valid) {
         let changed = false;
         const updates = {};
@@ -1361,6 +1380,36 @@ function App() {
 
   const armCloudMintJob = async (targetEpochMs, overrideStage = null, overridePrice = null) => {
     try {
+      const isOwner = currentUser?.email?.toLowerCase() === 'jainbharat666@gmail.com' || isOwnerAdmin;
+      if (!isOwner) {
+        if (currentUser?.valid_until && new Date(currentUser.valid_until) <= new Date()) {
+          log('⏳ Cannot schedule cloud mint: Your VIP Subscription has expired.', 'error');
+          setAppModalState({
+            isOpen: true,
+            type: 'lock',
+            title: '⏳ Subscription Expired',
+            message: 'Your subscription validity period has ended. Please contact Administrator to renew.',
+            icon: '⏳',
+            confirmText: 'Understood',
+            onConfirm: () => setAppModalState(prev => ({ ...prev, isOpen: false }))
+          });
+          return;
+        }
+        if (currentUser?.max_mints_allowed > 0 && (currentUser.total_mints || 0) >= currentUser.max_mints_allowed) {
+          log(`🎯 Cannot schedule cloud mint: Mint Quota Exhausted (${currentUser.total_mints || 0}/${currentUser.max_mints_allowed} used).`, 'error');
+          setAppModalState({
+            isOpen: true,
+            type: 'lock',
+            title: '🎯 Mint Quota Exhausted',
+            message: `You have reached your allocated limit of ${currentUser.max_mints_allowed} mints. No further mint operations are allowed.`,
+            icon: '🎯',
+            confirmText: 'Understood',
+            onConfirm: () => setAppModalState(prev => ({ ...prev, isOpen: false }))
+          });
+          return;
+        }
+      }
+
       cloudJobTargetEpochMsRef.current = Number(targetEpochMs);
       const currentWallets = walletsRef.current && walletsRef.current.length > 0 ? walletsRef.current : wallets;
       const currentMasterAddr = masterWalletAddressRef.current || masterWalletAddress;
@@ -1628,6 +1677,37 @@ function App() {
   // Top-Level Pro Scheduler Stage Locker (Accessible from all tabs: Dashboard, History, etc.)
   const handleScheduleStage = (stg) => {
     if (!stg?.startTime) return;
+
+    const isOwner = currentUser?.email?.toLowerCase() === 'jainbharat666@gmail.com' || isOwnerAdmin;
+    if (!isOwner) {
+      if (currentUser?.valid_until && new Date(currentUser.valid_until) <= new Date()) {
+        log('⏳ Cannot lock schedule: VIP Subscription validity has expired.', 'error');
+        setAppModalState({
+          isOpen: true,
+          type: 'lock',
+          title: '⏳ Subscription Expired',
+          message: 'Your subscription validity period has ended. Please contact Administrator to renew.',
+          icon: '⏳',
+          confirmText: 'Understood',
+          onConfirm: () => setAppModalState(prev => ({ ...prev, isOpen: false }))
+        });
+        return;
+      }
+      if (currentUser?.max_mints_allowed > 0 && (currentUser.total_mints || 0) >= currentUser.max_mints_allowed) {
+        log(`🎯 Cannot lock schedule: Mint Quota Exhausted (${currentUser.total_mints || 0}/${currentUser.max_mints_allowed} used).`, 'error');
+        setAppModalState({
+          isOpen: true,
+          type: 'lock',
+          title: '🎯 Mint Quota Exhausted',
+          message: `You have reached your allocated limit of ${currentUser.max_mints_allowed} mints. No further mint operations are allowed.`,
+          icon: '🎯',
+          confirmText: 'Understood',
+          onConfirm: () => setAppModalState(prev => ({ ...prev, isOpen: false }))
+        });
+        return;
+      }
+    }
+
     const startSec = typeof stg.startTime === 'string' && stg.startTime.includes('T')
       ? Math.floor(new Date(stg.startTime).getTime() / 1000)
       : Number(stg.startTime);
@@ -9668,7 +9748,8 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
 
                 <div className="form-group" style={{ flex: 1.2 }}>
                   <button 
-                    className={`btn ${isScheduled ? 'btn-danger scheduler-active-pulse' : 'btn-primary'}`} 
+                    className={`btn ${isScheduled ? 'btn-danger scheduler-active-pulse' : (!isOwnerAdmin && currentUser?.max_mints_allowed > 0 && (currentUser?.total_mints || 0) >= currentUser?.max_mints_allowed ? 'btn-secondary disabled' : 'btn-primary')}`} 
+                    disabled={!isScheduled && !isOwnerAdmin && ((currentUser?.valid_until && new Date(currentUser.valid_until) <= new Date()) || (currentUser?.max_mints_allowed > 0 && (currentUser?.total_mints || 0) >= currentUser?.max_mints_allowed))}
                     onClick={() => {
                       playSound('click');
                       if (isScheduled) {
@@ -9698,7 +9779,13 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                     }}
                     style={{ height: '38px', padding: '0 0.6rem', fontSize: '0.8rem', whiteSpace: 'nowrap', width: '100%' }}
                   >
-                    {isScheduled ? '⏰ Cancel' : '⏰ Schedule'}
+                    {isScheduled 
+                      ? '⏰ Cancel' 
+                      : (!isOwnerAdmin && currentUser?.valid_until && new Date(currentUser.valid_until) <= new Date()
+                          ? '⏳ Expired' 
+                          : (!isOwnerAdmin && currentUser?.max_mints_allowed > 0 && (currentUser?.total_mints || 0) >= currentUser?.max_mints_allowed
+                              ? '🎯 Quota Reached'
+                              : '⏰ Schedule'))}
                   </button>
                 </div>
               </div>

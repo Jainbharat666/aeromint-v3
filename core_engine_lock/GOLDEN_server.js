@@ -320,10 +320,30 @@ async function dbDeleteUser(userId) {
   }
 }
 
+function decodeInvite(inv) {
+  if (!inv) return inv;
+  let mints = 0;
+  if (inv.note) {
+    try {
+      const parsed = JSON.parse(inv.note);
+      if (parsed && typeof parsed.max_mints_limit === 'number') {
+        mints = parsed.max_mints_limit;
+      }
+    } catch (_) {
+      const m = String(inv.note).match(/MAX_MINTS:(\d+)/i);
+      if (m) mints = parseInt(m[1]);
+    }
+  }
+  return {
+    ...inv,
+    max_mints_limit: inv.max_mints_limit !== undefined ? inv.max_mints_limit : mints
+  };
+}
+
 async function dbGetInvites() {
   try {
     const res = await axios.get(`${SUPABASE_URL}/rest/v1/app_invites?select=*&order=created_at.desc`, { headers: supabaseHeaders, timeout: 8000 });
-    return res.data || [];
+    return (res.data || []).map(decodeInvite);
   } catch (e) {
     console.error('[Supabase DB Error - GetInvites]:', e.response?.data || e.message);
     return [];
@@ -334,7 +354,7 @@ async function dbGetInviteByCode(code) {
   try {
     const clean = (code || '').trim().toUpperCase();
     const res = await axios.get(`${SUPABASE_URL}/rest/v1/app_invites?invite_code=ilike.${encodeURIComponent(clean)}`, { headers: supabaseHeaders, timeout: 8000 });
-    return (res.data && res.data.length > 0) ? res.data[0] : null;
+    return (res.data && res.data.length > 0) ? decodeInvite(res.data[0]) : null;
   } catch (e) {
     console.error('[Supabase DB Error - GetInviteByCode]:', e.response?.data || e.message);
     return null;
@@ -342,27 +362,30 @@ async function dbGetInviteByCode(code) {
 }
 
 async function dbUpsertInvite(inviteObj) {
+  const mintsLimit = parseInt(inviteObj.max_mints_limit) || 0;
+  let noteData = { max_mints_limit: mintsLimit };
+  if (inviteObj.note) {
+    try {
+      const parsed = JSON.parse(inviteObj.note);
+      noteData = { ...parsed, max_mints_limit: mintsLimit };
+    } catch (_) {
+      noteData.desc = inviteObj.note;
+    }
+  }
+  const payload = {
+    ...inviteObj,
+    note: JSON.stringify(noteData)
+  };
+  delete payload.max_mints_limit; // Persist via structured note column to prevent Postgres schema errors
+
   try {
-    const res = await axios.post(`${SUPABASE_URL}/rest/v1/app_invites`, inviteObj, {
+    const res = await axios.post(`${SUPABASE_URL}/rest/v1/app_invites`, payload, {
       headers: { ...supabaseHeaders, Prefer: 'resolution=merge-duplicates,return=representation' },
       timeout: 8000
     });
-    return (res.data && res.data.length > 0) ? res.data[0] : inviteObj;
+    const saved = (res.data && res.data.length > 0) ? res.data[0] : payload;
+    return decodeInvite(saved);
   } catch (e) {
-    if (e.response?.data?.message?.includes('max_mints_limit')) {
-      const copy = { ...inviteObj };
-      delete copy.max_mints_limit;
-      try {
-        const retryRes = await axios.post(`${SUPABASE_URL}/rest/v1/app_invites`, copy, {
-          headers: { ...supabaseHeaders, Prefer: 'resolution=merge-duplicates,return=representation' },
-          timeout: 8000
-        });
-        return (retryRes.data && retryRes.data.length > 0) ? retryRes.data[0] : copy;
-      } catch (retryErr) {
-        console.error('[Supabase DB Error - UpsertInvite Retry]:', retryErr.response?.data || retryErr.message);
-        throw retryErr;
-      }
-    }
     console.error('[Supabase DB Error - UpsertInvite]:', e.response?.data || e.message);
     throw e;
   }
@@ -500,6 +523,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const validUntil = new Date();
     validUntil.setDate(validUntil.getDate() + validityDays);
 
+    const mintQuota = isOwner ? 0 : (inviteRecord?.max_mints_limit !== undefined ? parseInt(inviteRecord.max_mints_limit) : 0);
+
     const newUser = {
       id: existingUser ? existingUser.id : `u_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       email: cleanEmail,
@@ -507,7 +532,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       role: isOwner ? 'admin' : 'vip_member',
       invite_code_used: cleanCode,
       valid_until: validUntil.toISOString(),
-      max_mints_allowed: isOwner ? 0 : (parseInt(inviteRecord?.max_mints_limit) || 0),
+      max_mints_allowed: mintQuota,
       total_mints: existingUser?.total_mints || 0,
       is_banned: false,
       created_at: existingUser?.created_at || new Date().toISOString(),
@@ -986,9 +1011,9 @@ app.post('/api/users/extend-mints', adminAuthMiddleware, async (req, res) => {
   if (set_unlimited) {
     newQuota = 0;
   } else if (set_total_quota !== undefined) {
-    newQuota = parseInt(set_total_quota) || 0;
-  } else if (add_mints) {
-    newQuota = (user.max_mints_allowed || 0) + parseInt(add_mints);
+    newQuota = Math.max(0, parseInt(set_total_quota) || 0);
+  } else if (add_mints !== undefined) {
+    newQuota = Math.max(0, (user.max_mints_allowed || 0) + (parseInt(add_mints) || 0));
   }
 
   const updated = await dbUpdateUser(user_id, { max_mints_allowed: newQuota });
@@ -2649,8 +2674,15 @@ app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
         if (user.valid_until && new Date(user.valid_until) < new Date()) {
           return res.status(403).json({ success: false, error: `⏳ VIP Validity Expired on ${new Date(user.valid_until).toLocaleDateString()}. Contact Admin to renew.` });
         }
-        if (user.max_mints_allowed > 0 && (user.total_mints || 0) >= user.max_mints_allowed) {
-          return res.status(403).json({ success: false, error: `🎯 Mint Quota Exhausted (${user.total_mints || 0}/${user.max_mints_allowed} used). Contact Admin to extend quota.` });
+        const neededMints = wallets.length * (Number(quantity) || 1);
+        if (user.max_mints_allowed > 0) {
+          if ((user.total_mints || 0) >= user.max_mints_allowed) {
+            return res.status(403).json({ success: false, error: `🎯 Mint Quota Exhausted (${user.total_mints || 0}/${user.max_mints_allowed} used). Contact Admin to extend quota.` });
+          }
+          if ((user.total_mints || 0) + neededMints > user.max_mints_allowed) {
+            const remaining = user.max_mints_allowed - (user.total_mints || 0);
+            return res.status(403).json({ success: false, error: `🎯 Mint Quota Exceeded: You only have ${remaining} mint(s) remaining, but requested ${neededMints} mints across ${wallets.length} wallet(s).` });
+          }
         }
       }
     }

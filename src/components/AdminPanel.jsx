@@ -46,6 +46,16 @@ export default function AdminPanel({ currentUser, onShowToast }) {
   const [newMaxMintsLimit, setNewMaxMintsLimit] = useState(0); // 0 = unlimited
   const [newMaxUses, setNewMaxUses] = useState(1);
   const [isCreatingInvite, setIsCreatingInvite] = useState(false);
+  const [customDaysInput, setCustomDaysInput] = useState('');
+  const [customMintsInput, setCustomMintsInput] = useState('');
+  const [customPromptModal, setCustomPromptModal] = useState({
+    isOpen: false,
+    userId: null,
+    userEmail: '',
+    type: 'mints', // 'mints' or 'days'
+    currentVal: 0,
+    inputValue: ''
+  });
 
   // Action loading states
   const [actionLoadingId, setActionLoadingId] = useState(null);
@@ -262,13 +272,20 @@ export default function AdminPanel({ currentUser, onShowToast }) {
   }
 
   // 2. Extend Mint Quota
-  async function handleExtendMints(userId, addMints, setUnlimited = false) {
+  async function handleExtendMints(userId, addMints, setUnlimited = false, setTotalQuota = undefined) {
     setActionLoadingId(`mints_${userId}`);
     try {
-      const res = await extendUserMints({ userId, addMints, setUnlimited });
+      const res = await extendUserMints({ userId, addMints, setUnlimited, setTotalQuota });
       if (res.success) {
         setUsers(prev => prev.map(u => u.user_id === userId ? { ...u, max_mints_allowed: res.max_mints_allowed } : u));
-        if (onShowToast) onShowToast(setUnlimited ? '♾️ Set Mint Quota to UNLIMITED!' : `🎯 Added +${addMints} Mints to user quota!`, 'success');
+        if (onShowToast) onShowToast(
+          setUnlimited 
+            ? '♾️ Set Mint Quota to UNLIMITED!' 
+            : (setTotalQuota !== undefined 
+                ? `🎯 Set Mint Quota to exact ${setTotalQuota} Mints!` 
+                : `🎯 Added +${addMints} Mints to user quota!`), 
+          'success'
+        );
       }
     } finally {
       setActionLoadingId(null);
@@ -614,13 +631,13 @@ export default function AdminPanel({ currentUser, onShowToast }) {
                     <button
                       key={p.val}
                       type="button"
-                      onClick={() => setNewValidityDays(p.val)}
+                      onClick={() => { setNewValidityDays(p.val); setCustomDaysInput(''); }}
                       style={{
                         padding: '4px 8px',
                         borderRadius: '6px',
                         border: 'none',
-                        background: newValidityDays === p.val ? '#FF9345' : 'rgba(255,255,255,0.06)',
-                        color: newValidityDays === p.val ? '#000' : '#d1d5db',
+                        background: newValidityDays === p.val && !customDaysInput ? '#FF9345' : 'rgba(255,255,255,0.06)',
+                        color: newValidityDays === p.val && !customDaysInput ? '#000' : '#d1d5db',
                         fontSize: '0.72rem',
                         fontWeight: 'bold',
                         cursor: 'pointer'
@@ -629,6 +646,33 @@ export default function AdminPanel({ currentUser, onShowToast }) {
                       {p.label}
                     </button>
                   ))}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>Custom Days:</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="3650"
+                    placeholder="e.g. 5, 15, 60"
+                    value={customDaysInput}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setCustomDaysInput(val);
+                      if (val && !isNaN(parseInt(val))) {
+                        setNewValidityDays(parseInt(val));
+                      }
+                    }}
+                    style={{
+                      width: '110px',
+                      padding: '4px 8px',
+                      background: 'rgba(12, 15, 22, 0.95)',
+                      border: '1px solid rgba(56, 189, 248, 0.4)',
+                      borderRadius: '6px',
+                      color: '#38bdf8',
+                      fontSize: '0.75rem',
+                      fontWeight: 'bold'
+                    }}
+                  />
                 </div>
               </div>
 
@@ -649,13 +693,13 @@ export default function AdminPanel({ currentUser, onShowToast }) {
                     <button
                       key={m.val}
                       type="button"
-                      onClick={() => setNewMaxMintsLimit(m.val)}
+                      onClick={() => { setNewMaxMintsLimit(m.val); setCustomMintsInput(''); }}
                       style={{
                         padding: '4px 8px',
                         borderRadius: '6px',
                         border: 'none',
-                        background: newMaxMintsLimit === m.val ? '#c084fc' : 'rgba(255,255,255,0.06)',
-                        color: newMaxMintsLimit === m.val ? '#000' : '#d1d5db',
+                        background: newMaxMintsLimit === m.val && !customMintsInput ? '#c084fc' : 'rgba(255,255,255,0.06)',
+                        color: newMaxMintsLimit === m.val && !customMintsInput ? '#000' : '#d1d5db',
                         fontSize: '0.72rem',
                         fontWeight: 'bold',
                         cursor: 'pointer'
@@ -664,6 +708,33 @@ export default function AdminPanel({ currentUser, onShowToast }) {
                       {m.label}
                     </button>
                   ))}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>Custom Mints:</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100000"
+                    placeholder="e.g. 1, 3, 5, 12"
+                    value={customMintsInput}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setCustomMintsInput(val);
+                      if (val !== '' && !isNaN(parseInt(val))) {
+                        setNewMaxMintsLimit(parseInt(val));
+                      }
+                    }}
+                    style={{
+                      width: '110px',
+                      padding: '4px 8px',
+                      background: 'rgba(12, 15, 22, 0.95)',
+                      border: '1px solid rgba(192, 132, 252, 0.4)',
+                      borderRadius: '6px',
+                      color: '#c084fc',
+                      fontSize: '0.75rem',
+                      fontWeight: 'bold'
+                    }}
+                  />
                 </div>
               </div>
 
@@ -1051,6 +1122,14 @@ export default function AdminPanel({ currentUser, onShowToast }) {
                           >
                             +30d
                           </button>
+                          <button
+                            onClick={() => setCustomPromptModal({ isOpen: true, userId: u.user_id, userEmail: u.email, type: 'days', currentVal: daysLeft, inputValue: '7' })}
+                            disabled={actionLoadingId === `days_${u.user_id}`}
+                            title="Add custom days"
+                            style={{ padding: '3px 7px', borderRadius: '4px', background: 'rgba(255, 147, 69, 0.15)', border: '1px solid rgba(255, 147, 69, 0.35)', color: '#FF9345', fontSize: '0.72rem', fontWeight: '700', cursor: 'pointer' }}
+                          >
+                            +Custom
+                          </button>
                         </div>
 
                         {/* Mint Quota Controls */}
@@ -1079,6 +1158,14 @@ export default function AdminPanel({ currentUser, onShowToast }) {
                             style={{ padding: '3px 7px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.08)', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#fff', fontSize: '0.72rem', cursor: 'pointer' }}
                           >
                             Set ∞
+                          </button>
+                          <button
+                            onClick={() => setCustomPromptModal({ isOpen: true, userId: u.user_id, userEmail: u.email, type: 'mints', currentVal: maxMints, inputValue: String(maxMints || 5) })}
+                            disabled={actionLoadingId === `mints_${u.user_id}`}
+                            title="Set exact custom mint quota (e.g. 5 Mints)"
+                            style={{ padding: '3px 7px', borderRadius: '4px', background: 'rgba(255, 147, 69, 0.15)', border: '1px solid rgba(255, 147, 69, 0.4)', color: '#FF9345', fontSize: '0.72rem', fontWeight: '700', cursor: 'pointer' }}
+                          >
+                            🎯 Custom
                           </button>
                         </div>
 
@@ -1449,6 +1536,115 @@ export default function AdminPanel({ currentUser, onShowToast }) {
           )}
         </div>
       </div>
+
+
+      {/* Custom Days & Custom Quota Prompt Modal */}
+      {customPromptModal.isOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100000
+        }}>
+          <div style={{
+            background: 'rgba(15, 20, 32, 0.98)',
+            border: '1px solid rgba(255, 147, 69, 0.4)',
+            borderRadius: '12px',
+            padding: '24px',
+            width: '90%',
+            maxWidth: '380px',
+            boxShadow: '0 10px 40px rgba(0, 0, 0, 0.8)'
+          }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '1rem', color: '#FF9345', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {customPromptModal.type === 'mints' ? '🎯 Set Exact Mint Quota' : '⏳ Add Custom Validity Days'}
+            </h3>
+            <p style={{ margin: '0 0 16px 0', fontSize: '0.8rem', color: '#9ca3af' }}>
+              User: <strong style={{ color: '#fff' }}>{customPromptModal.userEmail}</strong>
+            </p>
+
+            <div style={{ marginBottom: '18px' }}>
+              <label style={{ fontSize: '0.75rem', color: '#d1d5db', display: 'block', marginBottom: '6px' }}>
+                {customPromptModal.type === 'mints' ? 'Enter Total Mint Limit (e.g. 5, 10, 20):' : 'Enter Days to Add (e.g. 5, 15, 60):'}
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="100000"
+                autoFocus
+                value={customPromptModal.inputValue}
+                onChange={e => setCustomPromptModal(prev => ({ ...prev, inputValue: e.target.value }))}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  padding: '10px 14px',
+                  background: 'rgba(10, 13, 20, 0.95)',
+                  border: '1px solid rgba(255, 147, 69, 0.5)',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  fontSize: '1rem',
+                  fontWeight: 'bold',
+                  outline: 'none'
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setCustomPromptModal(prev => ({ ...prev, isOpen: false }))}
+                style={{
+                  padding: '8px 16px',
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  color: '#9ca3af',
+                  borderRadius: '6px',
+                  fontSize: '0.8rem',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const val = parseInt(customPromptModal.inputValue);
+                  if (isNaN(val) || val <= 0) {
+                    if (onShowToast) onShowToast('Please enter a valid positive number', 'warning');
+                    return;
+                  }
+                  if (customPromptModal.type === 'mints') {
+                    handleExtendMints(customPromptModal.userId, 0, false, val);
+                  } else {
+                    const u = users.find(x => x.user_id === customPromptModal.userId);
+                    handleExtendDays(customPromptModal.userId, u?.valid_until, val);
+                  }
+                  setCustomPromptModal(prev => ({ ...prev, isOpen: false }));
+                }}
+                style={{
+                  padding: '8px 18px',
+                  background: 'linear-gradient(135deg, #FF9345, #f59e0b)',
+                  border: 'none',
+                  color: '#000',
+                  borderRadius: '6px',
+                  fontSize: '0.8rem',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                Save & Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CyberModal Confirmation Dialog */}
       <CyberModal
