@@ -3900,6 +3900,8 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
             ? collectionPreview.stages
             : [activeStage];
 
+        const allowlistStages = availableStages.filter(s => s.type === 'allowlist');
+
         for (const stg of availableStages) {
             const isAllowlist = stg.type === 'allowlist';
             const stgLimit = Number(stg.maxPerWallet) || 10;
@@ -3907,20 +3909,29 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
 
             if (isAllowlist) {
                 const hasMintedOnChain = mintedByWallet > 0;
+                const alIndex = allowlistStages.indexOf(stg);
+                const targetStageIndex = stg.stageIndex !== undefined ? stg.stageIndex : (alIndex + 1);
 
                 // Match against OpenSea GraphQL stages (OSNM-Z Engine)
-                const gqlMatch = graphqlStages?.find(gs => 
+                const gqlAllowlistStages = (graphqlStages || []).filter(gs => 
                     gs.stageType === 'SIGNED_PRESALE' || 
                     gs.stageType === 'MERKLE_PRESALE' || 
                     gs.stageType?.toLowerCase().includes('presale') || 
                     gs.stageType?.toLowerCase().includes('allowlist')
                 );
+
+                // Match against the exact stageIndex or sequential index
+                const gqlMatch = gqlAllowlistStages.find(gs => gs.stageIndex === targetStageIndex)
+                    || gqlAllowlistStages[alIndex]
+                    || (alIndex === 0 ? gqlAllowlistStages[0] : null);
+
                 const isGqlEligible = gqlMatch ? (gqlMatch.isEligible === true) : null;
                 const isGqlIneligible = gqlMatch ? (gqlMatch.isEligible === false) : null;
 
-                const isOpenseaApproved = isGqlEligible === true || fleetReport?.openSeaStatus === 'APPROVED' || fleetReport?.isAllowlistEligible;
-                const isDropNotActive = isGqlEligible === null && fleetReport?.openSeaStatus === 'DROP_NOT_ACTIVE';
-                const isLowBalance = isGqlEligible === null && fleetReport?.openSeaStatus === 'LOW_BALANCE';
+                const isFleetMatch = fleetReport?.stageName?.toLowerCase() === stg.name?.toLowerCase();
+                const isOpenseaApproved = isGqlEligible === true || (isFleetMatch && (fleetReport?.openSeaStatus === 'APPROVED' || fleetReport?.isAllowlistEligible));
+                const isDropNotActive = isGqlEligible === null && (fleetReport?.openSeaStatus === 'DROP_NOT_ACTIVE');
+                const isLowBalance = isGqlEligible === null && (fleetReport?.openSeaStatus === 'LOW_BALANCE');
 
                 if (hasMintedOnChain || isOpenseaApproved) {
                     anyWhitelistEligible = true;
@@ -3928,6 +3939,7 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
                         stageReports.push({
                             stageName: stg.name || 'Allowlist',
                             stageType: 'allowlist',
+                            stageIndex: targetStageIndex,
                             eligible: false,
                             detail: `⚠️ APPROVED on Whitelist, but Limit Reached (${mintedByWallet}/${stgLimit} minted)`
                         });
@@ -3936,6 +3948,7 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
                         stageReports.push({
                             stageName: stg.name || 'Allowlist',
                             stageType: 'allowlist',
+                            stageIndex: targetStageIndex,
                             eligible: true,
                             detail: `${verifiedLabel} (Minted: ${mintedByWallet}/${stgLimit} | Remaining: ${remaining})`
                         });
@@ -3944,6 +3957,7 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
                     stageReports.push({
                         stageName: stg.name || 'Allowlist',
                         stageType: 'allowlist',
+                        stageIndex: targetStageIndex,
                         eligible: false,
                         detail: `❌ Not on Whitelist (Confirmed by OpenSea GraphQL)`
                     });
@@ -3951,6 +3965,7 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
                     stageReports.push({
                         stageName: stg.name || 'Allowlist',
                         stageType: 'allowlist',
+                        stageIndex: targetStageIndex,
                         eligible: false,
                         detail: `⏳ UNVERIFIED: Drop not active on OpenSea yet — Verification locked until drop starts`
                     });
@@ -3958,6 +3973,7 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
                     stageReports.push({
                         stageName: stg.name || 'Allowlist',
                         stageType: 'allowlist',
+                        stageIndex: targetStageIndex,
                         eligible: false,
                         detail: `⚠️ Unfunded (< Mint Price) — Fund wallet with >= 0.0001 ETH to verify OpenSea Whitelist signature`
                     });
@@ -3965,6 +3981,7 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
                     stageReports.push({
                         stageName: stg.name || 'Allowlist',
                         stageType: 'allowlist',
+                        stageIndex: targetStageIndex,
                         eligible: false,
                         detail: `❌ Not on Whitelist for this stage (Ready for Public Round)`
                     });
@@ -3977,6 +3994,7 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
                 stageReports.push({
                     stageName: stg.name || 'Public stage',
                     stageType: 'public',
+                    stageIndex: 0,
                     eligible: true,
                     detail: `✅ ELIGIBLE: Open to All (Limit: ${pubLimit} per wallet)`
                 });
@@ -5624,7 +5642,11 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
 
         const cachedAudit = eligibilityStatsCacheRef.current?.get(w.address.toLowerCase());
         const isEligibleFromAudit = typeof cachedAudit === 'object'
-          ? (cachedAudit.anyWhitelistEligible === true || cachedAudit.stageReports?.some(s => s.eligible && (s.stageType === 'allowlist' || s.stageName === activeStage?.name)))
+          ? (
+              cachedAudit.stageReports?.some(s => s.eligible && s.stageName?.toLowerCase() === activeStage?.name?.toLowerCase()) ||
+              (cachedAudit.anyWhitelistEligible === true && (!activeStage?.name || activeStage?.name === 'Allowlist' || activeStage?.name === 'Allowlist / GTD')) ||
+              (!cachedAudit.stageReports?.some(s => s.stageName?.toLowerCase() === activeStage?.name?.toLowerCase()) && cachedAudit.anyWhitelistEligible === true)
+            )
           : false;
 
         const isAllowlistApproved = !isAllowlistStage || (signedData && signedData.data) || isStageUpcoming || isEligibleFromAudit;
@@ -7654,6 +7676,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
             return tA - tB;
           });
 
+          let allowlistCounter = 0;
           for (let i = 0; i < rawSorted.length; i++) {
             const s = rawSorted[i];
             const nextS = rawSorted[i + 1];
@@ -7696,6 +7719,14 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
               stype = 'public';
             }
 
+            let calculatedStageIndex = 0;
+            if (stype === 'allowlist') {
+              allowlistCounter++;
+              calculatedStageIndex = s.stage_index !== undefined ? Number(s.stage_index) : (s.drop_stage_index !== undefined ? Number(s.drop_stage_index) : allowlistCounter);
+            } else {
+              calculatedStageIndex = 0;
+            }
+
             stages.push({
               name: labelStr || (stype === 'public' ? 'Public stage' : `Stage ${i + 1}`),
               type: stype,
@@ -7703,6 +7734,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
               maxPerWallet: limit,
               startTime: sTime,
               endTime: eTime,
+              stageIndex: calculatedStageIndex,
               allowlistMemberCount: s.allowlist_wallet_count || s.allowlistMemberCount || null
             });
           }

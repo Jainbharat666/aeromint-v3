@@ -1666,7 +1666,11 @@ app.post('/api/check-eligibility-fleet', async (req, res) => {
         });
         dropData = dropRes.data;
         if (dropData?.stages) {
-          targetStageObj = dropData.stages.find(s => (s.stage_type === 'signed_presale' || s.stage_type === 'allowlist') || s.label?.toLowerCase() === stageName.toLowerCase()) || dropData.active_stage;
+          targetStageObj = dropData.stages.find(s => s.label?.toLowerCase() === stageName.toLowerCase() || s.name?.toLowerCase() === stageName.toLowerCase())
+            || (stageType === 'public'
+                ? dropData.stages.find(s => s.stage_type === 'public_sale' || s.stage_type === 'public')
+                : dropData.stages.find(s => s.stage_type === 'signed_presale' || s.stage_type === 'allowlist'))
+            || dropData.active_stage;
           if (targetStageObj?.start_time) {
             const startMs = new Date(targetStageObj.start_time).getTime();
             if (Date.now() < startMs) {
