@@ -915,6 +915,8 @@ function App() {
   const walletsRef = useRef([]);
   const isSeaDropRef = useRef(false);
   const masterWalletAddressRef = useRef('');
+  const rpcEndpointsRef = useRef([]);
+  const clientRpcCandidatesRef = rpcEndpointsRef;
   const signedMintCacheRef = useRef(new Map()); // RAM cache for OpenSea signed allowlist/presale calldata
   const preparedTxsRef = useRef([]); // RAM buffer for pre-signed 0.0ms execution
   const preflightSkippedWalletsRef = useRef(new Set()); // Wallets skipped at T-10 due to low balance
@@ -1305,12 +1307,22 @@ function App() {
       const priceToUse = overridePrice !== null ? overridePrice : pricePerNft;
 
       // Collect user's candidate RPC endpoints (including custom user nodes and fleet nodes)
-      const activeEndpoints = clientRpcCandidatesRef.current?.length > 0
-        ? clientRpcCandidatesRef.current
-        : [robinhoodRpcInput || 'https://rpc.mainnet.chain.robinhood.com'];
-        
-      const sorted = [...activeEndpoints].sort((a, b) => (a.latency || 999) - (b.latency || 999));
-      const targetRpcs = sorted.length > 0 ? sorted : activeEndpoints;
+      const endpointsSource = (rpcEndpointsRef.current && rpcEndpointsRef.current.length > 0)
+        ? rpcEndpointsRef.current
+        : (Array.isArray(rpcEndpoints) && rpcEndpoints.length > 0 ? rpcEndpoints : []);
+
+      const activeEndpoints = endpointsSource
+        .filter(r => r && r.url && r.latency !== 'Offline' && r.latency !== 'Error')
+        .map(r => ({
+          name: r.name || 'Node',
+          url: r.url,
+          latency: typeof r.latency === 'number' ? r.latency : (parseFloat(r.latency) || 999)
+        }));
+
+      const fallbackRpc = currentNetwork?.rpc || 'https://rpc.mainnet.chain.robinhood.com';
+      const targetRpcs = activeEndpoints.length > 0
+        ? [...activeEndpoints].sort((a, b) => (a.latency || 999) - (b.latency || 999))
+        : [{ name: 'Robinhood Official RPC', url: fallbackRpc, latency: 50 }];
 
       const payload = {
         targetEpochMs: Number(targetEpochMs),
@@ -1577,6 +1589,7 @@ function App() {
   useEffect(() => { walletsRef.current = wallets; }, [wallets]);
   useEffect(() => { isSeaDropRef.current = isSeaDrop; }, [isSeaDrop]);
   useEffect(() => { masterWalletAddressRef.current = masterWalletAddress; }, [masterWalletAddress]);
+  useEffect(() => { rpcEndpointsRef.current = rpcEndpoints; }, [rpcEndpoints]);
 
   useEffect(() => {
     let cancelled = false;
