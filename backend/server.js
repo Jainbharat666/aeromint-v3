@@ -2474,6 +2474,7 @@ app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
       contractAddress: contractAddress || '',
       seaDropAddress: seaDropAddress || '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
       stage: stage || 'public',
+      pricePerNft: String(pricePerNft || '0.0'),
       quantity: Number(quantity) || 1,
       gasSpeed: (gasSpeed || 'turbo').toLowerCase(),
       customMaxFee,
@@ -2838,13 +2839,18 @@ setInterval(async () => {
           job.computedMaxPriority = maxPriority;
           addCloudLog(jobId, `T-5s: Pre-fetching Dynamic Gas [${speed.toUpperCase()}: maxFee=${ethers.formatUnits(maxFee, 'gwei')} Gwei | tip=${ethers.formatUnits(maxPriority, 'gwei')} Gwei] and Nonces in RAM...`, 'info');
 
-          // Pre-fetch nonces
+          // Pre-fetch nonces with multi-RPC fallback
           await Promise.all(job.wallets.map(async (w) => {
-            try {
-              w.nonce = await provider.getTransactionCount(w.address, 'pending');
-            } catch (_) {
-              w.nonce = 0;
+            let fetchedNonce = null;
+            const rpcCandidateList = job.activeBlastRpcs?.length > 0 ? job.activeBlastRpcs : DEFAULT_FALLBACK_RPCS;
+            for (const rpcUrl of rpcCandidateList) {
+              try {
+                const p = new ethers.JsonRpcProvider(rpcUrl);
+                fetchedNonce = await p.getTransactionCount(w.address, 'pending');
+                if (fetchedNonce !== null && fetchedNonce !== undefined) break;
+              } catch (_) {}
             }
+            w.nonce = fetchedNonce !== null && fetchedNonce !== undefined ? fetchedNonce : (w.nonce !== undefined ? w.nonce : 0);
           }));
 
           const isPublic = job.stage === 'public';
@@ -2853,11 +2859,27 @@ setInterval(async () => {
           if (isPublic || hasAllSignatures) {
             const preSigned = [];
             const gasLimit = 150000n + (BigInt(job.quantity || 1) * 15000n);
+            const SEADROP_MINT_PUBLIC_IFACE = new ethers.Interface([
+              'function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity) external payable'
+            ]);
             for (const w of job.wallets) {
               const sub = job.signedCalldataMap.get(w.address.toLowerCase());
               const toAddr = sub?.to || job.seaDropAddress;
-              const txData = sub?.data || '0x';
-              const val = sub?.value !== undefined ? BigInt(sub.value) : (job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
+              let txData = sub?.data;
+              if (!txData && isPublic && job.contractAddress) {
+                try {
+                  txData = SEADROP_MINT_PUBLIC_IFACE.encodeFunctionData('mintPublic', [
+                    job.contractAddress,
+                    '0x0000a26b00c1F0DF003000390027140000fAa719',
+                    '0x0000000000000000000000000000000000000000',
+                    BigInt(job.quantity || 1)
+                  ]);
+                } catch (_) {}
+              }
+              if (!txData) txData = '0x';
+              const val = sub?.value !== undefined && sub?.value !== null 
+                ? BigInt(sub.value) 
+                : (job.pricePerNft && job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
 
               // Zero-Revert Balance Protection: Clamp maxFee if wallet balance cannot support hyped priority fee
               let walletMaxFee = maxFee;
@@ -2927,7 +2949,7 @@ setInterval(async () => {
             if (!allSecured()) {
               const keysToUse = OPENSEA_API_KEYS.length > 0 ? OPENSEA_API_KEYS : ['5f32ee9b98e84ea184a514f975ad4f3f'];
               const staggerTimers = [];
-              const staggerDelays = [0, 60, 130, 200, 270, 340]; // 70ms calibrated phase shift from Virginia edge
+              const staggerDelays = [0, 30, 60, 90, 120, 150, 185, 220, 260, 300]; // 30ms tight calibrated laser grid from Virginia edge
 
               staggerDelays.forEach((delayMs, idx) => {
                 const key = keysToUse[idx % keysToUse.length];
@@ -2962,13 +2984,26 @@ setInterval(async () => {
 
             // Build & sign raw transactions with pre-computed gas & nonces
             const signedRawTxs = [];
+            const SEADROP_MINT_PUBLIC_IFACE = new ethers.Interface([
+              'function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity) external payable'
+            ]);
             for (let i = 0; i < job.wallets.length; i++) {
               const w = job.wallets[i];
               const sub = job.signedCalldataMap.get(w.address.toLowerCase());
-              if (!sub?.data) continue;
+              let txData = sub?.data;
+              if (!txData && job.stage === 'public' && job.contractAddress) {
+                try {
+                  txData = SEADROP_MINT_PUBLIC_IFACE.encodeFunctionData('mintPublic', [
+                    job.contractAddress,
+                    '0x0000a26b00c1F0DF003000390027140000fAa719',
+                    '0x0000000000000000000000000000000000000000',
+                    BigInt(job.quantity || 1)
+                  ]);
+                } catch (_) {}
+              }
+              if (!txData) continue;
 
-              const toAddr = sub.to || job.seaDropAddress;
-              const txData = sub.data;
+              const toAddr = sub?.to || job.seaDropAddress;
               const val = sub.value !== undefined && sub.value !== null
                 ? BigInt(sub.value)
                 : (job.pricePerNft && job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
