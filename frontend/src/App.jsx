@@ -2970,24 +2970,8 @@ function App() {
     if (isCheckingPings || isCheckingStability) return;
     setIsCheckingStability(true);
     try {
-      log('Running RPC stability checks (5x pings average)...', 'info');
-      const updated = await Promise.all(rpcEndpoints.map(async (rpc) => {
-        const latency = await testRpcLatencyMulti(rpc.url, 5);
-        return { ...rpc, latency };
-      }));
-      
-      updated.sort((a, b) => {
-        const aOffline = a.latency === 'Offline' || a.latency === 'Unchecked';
-        const bOffline = b.latency === 'Offline' || b.latency === 'Unchecked';
-        if (aOffline && !bOffline) return 1;
-        if (!aOffline && bOffline) return -1;
-        if (aOffline && bOffline) return 0;
-        const aVal = parseInt(a.latency) || 9999;
-        const bVal = parseInt(b.latency) || 9999;
-        return aVal - bVal;
-      });
-
-      setRpcEndpoints(updated);
+      log('Running RPC stability checks from Ashburn US Cloud Edge...', 'info');
+      await runStartup3xPingProbe(null, true);
       log('RPC stability checking and sorting completed.', 'success');
       playSound('ping');
     } catch (e) {
