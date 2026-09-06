@@ -42,7 +42,7 @@ export default function UserProfileModal({
 
   // Cloud Vault & Sync State
   const [vaultEnabled, setVaultEnabled] = useState(() => {
-    return localStorage.getItem(`aero_vault_enabled_${currentUser?.id}`) === 'true';
+    return localStorage.getItem(`aerov3_vault_enabled_${currentUser?.id}`) === 'true';
   });
   const [vaultStats, setVaultStats] = useState({
     walletCount: 0,
@@ -113,7 +113,7 @@ export default function UserProfileModal({
         });
         if (cfg.cloud_vault_enabled !== undefined) {
           setVaultEnabled(cfg.cloud_vault_enabled);
-          localStorage.setItem(`aero_vault_enabled_${currentUser.id}`, String(cfg.cloud_vault_enabled));
+          localStorage.setItem(`aerov3_vault_enabled_${currentUser.id}`, String(cfg.cloud_vault_enabled));
         }
       } else {
         setVaultStats({ walletCount: 0, rpcCount: 0, lastSynced: null, loading: false });
@@ -126,7 +126,7 @@ export default function UserProfileModal({
   // Handle Vault Toggle
   async function handleToggleVault(enabled) {
     setVaultEnabled(enabled);
-    localStorage.setItem(`aero_vault_enabled_${currentUser?.id}`, String(enabled));
+    localStorage.setItem(`aerov3_vault_enabled_${currentUser?.id}`, String(enabled));
     if (currentUser?.id) {
       await saveCloudVaultConfig(currentUser.id, { cloud_vault_enabled: enabled });
       if (onShowToast) onShowToast(enabled ? '🔒 Cloud Vault Backup Enabled' : '⚪ Switched to Local-Only Mode', 'info');
@@ -139,7 +139,7 @@ export default function UserProfileModal({
     
     // Check strictly user-scoped key
     try {
-      const raw = localStorage.getItem(`aero_user_${currentUser?.id}_wallets`);
+      const raw = localStorage.getItem(`aerov3_user_${currentUser?.id}_wallets`);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -168,8 +168,8 @@ export default function UserProfileModal({
     }
 
     try {
-      const raw = localStorage.getItem(`aero_u_${currentUser?.id}_custom_rpcs_${selectedNetworkKey}`) ||
-                  localStorage.getItem('aero_custom_rpcs');
+      const raw = localStorage.getItem(`aerov3_u_${currentUser?.id}_custom_rpcs_${selectedNetworkKey}`) ||
+                  localStorage.getItem('aerov3_custom_rpcs');
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) return parsed.filter(r => !isSystemRpc(r));
@@ -189,10 +189,10 @@ export default function UserProfileModal({
 
       let walletNames = {};
       try {
-        walletNames = JSON.parse(localStorage.getItem('aero_wallet_names') || '{}');
+        walletNames = JSON.parse(localStorage.getItem('aerov3_wallet_names') || '{}');
       } catch (e) {}
 
-      const masterWallet = localStorage.getItem('aero_master_wallet') || '';
+      const masterWallet = localStorage.getItem('aerov3_master_wallet') || '';
 
       const payload = {
         cloud_vault_enabled: true,
@@ -206,7 +206,7 @@ export default function UserProfileModal({
       const res = await saveCloudVaultConfig(currentUser.id, payload);
       if (res.success) {
         setVaultEnabled(true);
-        localStorage.setItem(`aero_vault_enabled_${currentUser.id}`, 'true');
+        localStorage.setItem(`aerov3_vault_enabled_${currentUser.id}`, 'true');
         setVaultStats({
           walletCount: localWallets.length,
           rpcCount: localRpcs.length,
@@ -236,24 +236,24 @@ export default function UserProfileModal({
         let restoredRpcs = 0;
 
         if (cfg.wallets && Array.isArray(cfg.wallets) && cfg.wallets.length > 0) {
-          localStorage.setItem(`aero_user_${currentUser.id}_wallets`, JSON.stringify(cfg.wallets));
+          localStorage.setItem(`aerov3_user_${currentUser.id}_wallets`, JSON.stringify(cfg.wallets));
           if (onImportWallets) onImportWallets(cfg.wallets);
           restoredWallets = cfg.wallets.length;
         }
 
         if (cfg.custom_rpcs && Array.isArray(cfg.custom_rpcs) && cfg.custom_rpcs.length > 0) {
-          localStorage.setItem(`aero_u_${currentUser.id}_custom_rpcs_${selectedNetworkKey}`, JSON.stringify(cfg.custom_rpcs));
-          localStorage.setItem('aero_custom_rpcs', JSON.stringify(cfg.custom_rpcs));
+          localStorage.setItem(`aerov3_u_${currentUser.id}_custom_rpcs_${selectedNetworkKey}`, JSON.stringify(cfg.custom_rpcs));
+          localStorage.setItem('aerov3_custom_rpcs', JSON.stringify(cfg.custom_rpcs));
           if (onRestoreRpcs) onRestoreRpcs(cfg.custom_rpcs);
           restoredRpcs = cfg.custom_rpcs.length;
         }
 
         if (cfg.wallet_names) {
-          localStorage.setItem('aero_wallet_names', JSON.stringify(cfg.wallet_names));
+          localStorage.setItem('aerov3_wallet_names', JSON.stringify(cfg.wallet_names));
         }
 
         if (cfg.master_wallet) {
-          localStorage.setItem('aero_master_wallet', cfg.master_wallet);
+          localStorage.setItem('aerov3_master_wallet', cfg.master_wallet);
         }
 
         if (onShowToast) onShowToast(`🎉 Restored ${restoredWallets} Wallets & ${restoredRpcs} RPCs! Reloading session...`, 'success');
@@ -350,7 +350,7 @@ export default function UserProfileModal({
           max_mints_allowed: res.max_mints_allowed !== undefined ? res.max_mints_allowed : currentUser.max_mints_allowed
         };
         if (onUpdateUser) onUpdateUser(updated);
-        localStorage.setItem('aero_auth_session', JSON.stringify({ user: updated, loggedInAt: Date.now() }));
+        localStorage.setItem('aerov3_auth_session', JSON.stringify({ user: updated, loggedInAt: Date.now() }));
       }
 
       if (onShowToast) onShowToast(res.message || '🎉 Top-up Applied Successfully!', 'success');

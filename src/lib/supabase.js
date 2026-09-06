@@ -43,7 +43,7 @@ export async function cloudRegister({ email, password, inviteCode }) {
   }
 
   if (data.sessionToken) {
-    localStorage.setItem('aero_session_token', data.sessionToken);
+    localStorage.setItem('aerov3_session_token', data.sessionToken);
   }
 
   // Synchronously store config
@@ -60,24 +60,24 @@ export async function cloudRegister({ email, password, inviteCode }) {
 
   // Clean any previous un-scoped wallet keys to guarantee clean slate
   try {
-    localStorage.removeItem('aero_wallets');
-    localStorage.removeItem('aero_active_wallets');
-    localStorage.removeItem('aero_encrypted_session');
+    localStorage.removeItem('aerov3_wallets');
+    localStorage.removeItem('aerov3_active_wallets');
+    localStorage.removeItem('aerov3_encrypted_session');
   } catch (e) {}
 
   if (config && data.user?.id) {
     if (config.wallets && Array.isArray(config.wallets) && config.wallets.length > 0) {
-      localStorage.setItem(`aero_user_${data.user.id}_wallets`, JSON.stringify(config.wallets));
+      localStorage.setItem(`aerov3_user_${data.user.id}_wallets`, JSON.stringify(config.wallets));
     } else {
-      localStorage.removeItem(`aero_user_${data.user.id}_wallets`);
+      localStorage.removeItem(`aerov3_user_${data.user.id}_wallets`);
     }
     if (config.custom_rpcs && Array.isArray(config.custom_rpcs) && config.custom_rpcs.length > 0) {
-      localStorage.setItem(`aero_u_${data.user.id}_custom_rpcs_robinhood`, JSON.stringify(config.custom_rpcs));
-      localStorage.setItem('aero_custom_rpcs', JSON.stringify(config.custom_rpcs));
+      localStorage.setItem(`aerov3_u_${data.user.id}_custom_rpcs_robinhood`, JSON.stringify(config.custom_rpcs));
+      localStorage.setItem('aerov3_custom_rpcs', JSON.stringify(config.custom_rpcs));
     }
   }
 
-  localStorage.setItem('aero_auth_session', JSON.stringify({ user: data.user, loggedInAt: Date.now() }));
+  localStorage.setItem('aerov3_auth_session', JSON.stringify({ user: data.user, loggedInAt: Date.now() }));
   return data;
 }
 
@@ -99,7 +99,7 @@ export async function cloudLogin({ email, password }) {
   }
 
   if (data.sessionToken) {
-    localStorage.setItem('aero_session_token', data.sessionToken);
+    localStorage.setItem('aerov3_session_token', data.sessionToken);
   }
 
   // Multi-Strategy Config Auto-Discovery (Direct Supabase + Backend)
@@ -116,30 +116,30 @@ export async function cloudLogin({ email, password }) {
 
   // Clean stale un-scoped keys on login
   try {
-    localStorage.removeItem('aero_wallets');
-    localStorage.removeItem('aero_active_wallets');
+    localStorage.removeItem('aerov3_wallets');
+    localStorage.removeItem('aerov3_active_wallets');
   } catch (e) {}
 
   // Immediately store in localStorage synchronously before returning
   if (config && data.user?.id) {
     if (config.wallets && Array.isArray(config.wallets) && config.wallets.length > 0) {
-      localStorage.setItem(`aero_user_${data.user.id}_wallets`, JSON.stringify(config.wallets));
+      localStorage.setItem(`aerov3_user_${data.user.id}_wallets`, JSON.stringify(config.wallets));
     } else {
-      localStorage.removeItem(`aero_user_${data.user.id}_wallets`);
+      localStorage.removeItem(`aerov3_user_${data.user.id}_wallets`);
     }
     if (config.custom_rpcs && Array.isArray(config.custom_rpcs) && config.custom_rpcs.length > 0) {
-      localStorage.setItem(`aero_u_${data.user.id}_custom_rpcs_robinhood`, JSON.stringify(config.custom_rpcs));
-      localStorage.setItem('aero_custom_rpcs', JSON.stringify(config.custom_rpcs));
+      localStorage.setItem(`aerov3_u_${data.user.id}_custom_rpcs_robinhood`, JSON.stringify(config.custom_rpcs));
+      localStorage.setItem('aerov3_custom_rpcs', JSON.stringify(config.custom_rpcs));
     }
     if (config.wallet_names) {
-      localStorage.setItem('aero_wallet_names', JSON.stringify(config.wallet_names));
+      localStorage.setItem('aerov3_wallet_names', JSON.stringify(config.wallet_names));
     }
     if (config.master_wallet) {
-      localStorage.setItem('aero_master_wallet', config.master_wallet);
+      localStorage.setItem('aerov3_master_wallet', config.master_wallet);
     }
   }
 
-  localStorage.setItem('aero_auth_session', JSON.stringify({ user: data.user, loggedInAt: Date.now() }));
+  localStorage.setItem('aerov3_auth_session', JSON.stringify({ user: data.user, loggedInAt: Date.now() }));
   return data;
 }
 
@@ -171,7 +171,7 @@ export async function redeemTopupCode({ email, topupCode }) {
 
 export async function checkSessionHeartbeat(email, userId) {
   try {
-    const sessionToken = localStorage.getItem('aero_session_token') || '';
+    const sessionToken = localStorage.getItem('aerov3_session_token') || '';
     const res = await fetch(`${BACKEND_BASE}/api/auth/heartbeat?email=${encodeURIComponent(email || '')}&userId=${encodeURIComponent(userId || '')}&sessionToken=${encodeURIComponent(sessionToken)}`);
     if (res.ok) {
       return await res.json();
@@ -282,7 +282,7 @@ export async function deleteCloudVaultConfig(userId) {
 
 export async function syncVaultToCloud(userId, encryptedVaultData, walletCount) {
   try {
-    localStorage.setItem(`aero_user_${userId}_vault`, JSON.stringify(encryptedVaultData));
+    localStorage.setItem(`aerov3_user_${userId}_vault`, JSON.stringify(encryptedVaultData));
   } catch (e) {}
 
   if (!isSupabaseConfigured || !supabase || !userId) {
@@ -327,7 +327,7 @@ export async function syncVaultToCloud(userId, encryptedVaultData, walletCount) 
 export async function fetchVaultFromCloud(userId) {
   let localVault = null;
   try {
-    const saved = localStorage.getItem(`aero_user_${userId}_vault`);
+    const saved = localStorage.getItem(`aerov3_user_${userId}_vault`);
     if (saved) localVault = JSON.parse(saved);
   } catch (e) {}
 
@@ -355,7 +355,7 @@ export async function fetchVaultFromCloud(userId) {
 
 export async function syncCustomRpcsToCloud(userId, rpcList) {
   try {
-    localStorage.setItem(`aero_user_${userId}_custom_rpcs`, JSON.stringify(rpcList));
+    localStorage.setItem(`aerov3_user_${userId}_custom_rpcs`, JSON.stringify(rpcList));
   } catch (e) {}
 
   if (!isSupabaseConfigured || !supabase || !userId) {
@@ -407,7 +407,7 @@ export async function syncCustomRpcsToCloud(userId, rpcList) {
 export async function fetchCustomRpcsFromCloud(userId) {
   let localRpcs = [];
   try {
-    const saved = localStorage.getItem(`aero_user_${userId}_custom_rpcs`);
+    const saved = localStorage.getItem(`aerov3_user_${userId}_custom_rpcs`);
     if (saved) localRpcs = JSON.parse(saved);
   } catch (e) {}
 
@@ -450,11 +450,11 @@ export async function fetchCustomRpcsFromCloud(userId) {
 // ─── ADMIN COMMAND SERVICES ────────────────────────────────────────────────
 
 function getAuthHeaders() {
-  let token = localStorage.getItem('aero_session_token') || '';
+  let token = localStorage.getItem('aerov3_session_token') || '';
   let userEmail = '';
   let userId = '';
   try {
-    const saved = localStorage.getItem('aero_auth_session');
+    const saved = localStorage.getItem('aerov3_auth_session');
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed?.user?.email) userEmail = parsed.user.email;
@@ -660,7 +660,7 @@ export async function fetchFleetRpcs(networkKey = 'robinhood') {
       const data = await res.json();
       if (data && data.success && Array.isArray(data.rpcs) && data.rpcs.length > 0) {
         try {
-          localStorage.setItem(`aero_cloud_fleet_cache_${networkKey}`, JSON.stringify(data.rpcs));
+          localStorage.setItem(`aerov3_cloud_fleet_cache_${networkKey}`, JSON.stringify(data.rpcs));
         } catch (e) {}
         return { success: true, rpcs: data.rpcs };
       }
@@ -669,7 +669,7 @@ export async function fetchFleetRpcs(networkKey = 'robinhood') {
 
   // 2. Local memory / cache fallback
   try {
-    const cached = localStorage.getItem(`aero_cloud_fleet_cache_${networkKey}`);
+    const cached = localStorage.getItem(`aerov3_cloud_fleet_cache_${networkKey}`);
     if (cached) {
       const parsed = JSON.parse(cached);
       if (Array.isArray(parsed) && parsed.length > 0) return { success: true, rpcs: parsed };
@@ -695,8 +695,8 @@ export async function saveFleetRpc({ id, networkKey = 'robinhood', name, url, is
       const data = await res.json();
       if (data && data.success) {
         try {
-          localStorage.setItem(`aero_cloud_fleet_cache_${networkKey}`, JSON.stringify(data.rpcs));
-          window.dispatchEvent(new CustomEvent('aero_fleet_updated', { detail: { networkKey, rpcs: data.rpcs } }));
+          localStorage.setItem(`aerov3_cloud_fleet_cache_${networkKey}`, JSON.stringify(data.rpcs));
+          window.dispatchEvent(new CustomEvent('aerov3_fleet_updated', { detail: { networkKey, rpcs: data.rpcs } }));
         } catch (e) {}
         return data;
       }
@@ -711,8 +711,8 @@ export async function saveFleetRpc({ id, networkKey = 'robinhood', name, url, is
   const record = { id: rpcId, network_key: networkKey, name, url, is_active: isActive, priority, updated_at: new Date().toISOString() };
   const updated = [record, ...((curr?.rpcs || []).filter(r => r.id !== rpcId))];
   try {
-    localStorage.setItem(`aero_cloud_fleet_cache_${networkKey}`, JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('aero_fleet_updated', { detail: { networkKey, rpcs: updated } }));
+    localStorage.setItem(`aerov3_cloud_fleet_cache_${networkKey}`, JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent('aerov3_fleet_updated', { detail: { networkKey, rpcs: updated } }));
   } catch (e) {}
   return { success: true, rpc: record, rpcs: updated };
 }
@@ -728,8 +728,8 @@ export async function deleteFleetRpc(rpcId, networkKey = 'robinhood') {
       const data = await res.json();
       if (data && data.success) {
         try {
-          localStorage.setItem(`aero_cloud_fleet_cache_${networkKey}`, JSON.stringify(data.rpcs));
-          window.dispatchEvent(new CustomEvent('aero_fleet_updated', { detail: { networkKey, rpcs: data.rpcs } }));
+          localStorage.setItem(`aerov3_cloud_fleet_cache_${networkKey}`, JSON.stringify(data.rpcs));
+          window.dispatchEvent(new CustomEvent('aerov3_fleet_updated', { detail: { networkKey, rpcs: data.rpcs } }));
         } catch (e) {}
         return data;
       }
@@ -739,8 +739,8 @@ export async function deleteFleetRpc(rpcId, networkKey = 'robinhood') {
   const curr = await fetchFleetRpcs(networkKey);
   const updated = (curr?.rpcs || []).filter(r => r.id !== rpcId);
   try {
-    localStorage.setItem(`aero_cloud_fleet_cache_${networkKey}`, JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('aero_fleet_updated', { detail: { networkKey, rpcs: updated } }));
+    localStorage.setItem(`aerov3_cloud_fleet_cache_${networkKey}`, JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent('aerov3_fleet_updated', { detail: { networkKey, rpcs: updated } }));
   } catch (e) {}
   return { success: true, rpcs: updated };
 }

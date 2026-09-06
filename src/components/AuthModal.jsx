@@ -78,7 +78,7 @@ export default function AuthModal({ onLoginSuccess, isDayMode: propIsDayMode, se
   }
 
   const [internalDayMode, setInternalDayMode] = useState(() => {
-    try { return sessionStorage.getItem('aero_theme') === 'day'; } catch(e) { return false; }
+    try { return sessionStorage.getItem('aerov3_theme') === 'day'; } catch(e) { return false; }
   });
   const isDayMode = propIsDayMode !== undefined ? propIsDayMode : internalDayMode;
   const [videoActive, setVideoActive] = useState(true);
@@ -91,10 +91,10 @@ export default function AuthModal({ onLoginSuccess, isDayMode: propIsDayMode, se
       setInternalDayMode(next);
       if (next) {
         document.body.classList.add('day-mode');
-        try { sessionStorage.setItem('aero_theme', 'day'); localStorage.setItem('aero_theme', 'day'); } catch(e) {}
+        try { sessionStorage.setItem('aerov3_theme', 'day'); localStorage.setItem('aerov3_theme', 'day'); } catch(e) {}
       } else {
         document.body.classList.remove('day-mode');
-        try { sessionStorage.setItem('aero_theme', 'night'); localStorage.setItem('aero_theme', 'night'); } catch(e) {}
+        try { sessionStorage.setItem('aerov3_theme', 'night'); localStorage.setItem('aerov3_theme', 'night'); } catch(e) {}
       }
     }
   }

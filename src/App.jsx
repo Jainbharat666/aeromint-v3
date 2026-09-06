@@ -129,7 +129,7 @@ function isSystemRpcUrl(url, networkKey = 'robinhood') {
 function getStoredCustomRpcs(userId, networkKey = 'robinhood') {
   const uid = userId || 'guest';
   try {
-    const raw = localStorage.getItem(`aero_u_${uid}_custom_rpcs_${networkKey}`);
+    const raw = localStorage.getItem(`aerov3_u_${uid}_custom_rpcs_${networkKey}`);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -147,7 +147,7 @@ function getStoredCustomRpcs(userId, networkKey = 'robinhood') {
 
   // Backward compatibility: legacy un-scoped key
   try {
-    const legacy = localStorage.getItem('aero_custom_rpcs');
+    const legacy = localStorage.getItem('aerov3_custom_rpcs');
     if (legacy) {
       const parsed = JSON.parse(legacy);
       if (Array.isArray(parsed)) {
@@ -180,8 +180,8 @@ function persistCustomRpcs(userId, networkKey, customList) {
       latency: r.latency || 'Unchecked'
     }));
   try {
-    localStorage.setItem(`aero_u_${uid}_custom_rpcs_${networkKey}`, JSON.stringify(cleanList));
-    localStorage.setItem('aero_custom_rpcs', JSON.stringify(cleanList));
+    localStorage.setItem(`aerov3_u_${uid}_custom_rpcs_${networkKey}`, JSON.stringify(cleanList));
+    localStorage.setItem('aerov3_custom_rpcs', JSON.stringify(cleanList));
   } catch (e) {}
 }
 
@@ -396,7 +396,22 @@ function getLiveCountdownText(startTime, endTime, currentSec) {
 function App() {
   // Authentication & Multi-Tenant Cloud Session State
   const [currentUser, setCurrentUser] = useState(() => {
-    const saved = localStorage.getItem('aero_auth_session');
+    let saved = localStorage.getItem('aerov3_auth_session');
+    // Seamless one-time auto-migration from legacy session if aerov3 not set yet
+    if (!saved) {
+      const legacy = localStorage.getItem('aero_auth_session');
+      if (legacy) {
+        try {
+          const parsed = JSON.parse(legacy);
+          if (parsed?.user) {
+            saved = legacy;
+            localStorage.setItem('aerov3_auth_session', legacy);
+            const legacyToken = localStorage.getItem('aero_session_token');
+            if (legacyToken) localStorage.setItem('aerov3_session_token', legacyToken);
+          }
+        } catch (e) {}
+      }
+    }
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -421,11 +436,11 @@ function App() {
     setDecryptPasswordInput('');
     setIsSessionSaved(false);
 
-    localStorage.removeItem('aero_auth_session');
-    localStorage.removeItem('aero_session_token');
-    localStorage.removeItem('aero_wallets');
-    localStorage.removeItem('aero_active_wallets');
-    localStorage.removeItem('aero_encrypted_session');
+    localStorage.removeItem('aerov3_auth_session');
+    localStorage.removeItem('aerov3_session_token');
+    localStorage.removeItem('aerov3_wallets');
+    localStorage.removeItem('aerov3_active_wallets');
+    localStorage.removeItem('aerov3_encrypted_session');
 
     setCurrentUser(null);
     log('🔒 Workspace locked. Logged out successfully.', 'info');
@@ -486,7 +501,7 @@ function App() {
       if (status && status.valid === false) {
         log(status.message || '🚫 Session terminated by Administrator.', 'error');
         // Instantly wipe session from memory & disk
-        localStorage.removeItem('aero_auth_session');
+        localStorage.removeItem('aerov3_auth_session');
         setAppModalState({
           isOpen: true,
           type: 'lock',
@@ -519,12 +534,12 @@ function App() {
             if (!prev) return prev;
             const up = { ...prev, ...updates };
             try {
-              const saved = localStorage.getItem('aero_auth_session');
+              const saved = localStorage.getItem('aerov3_auth_session');
               if (saved) {
                 const parsed = JSON.parse(saved);
                 if (parsed?.user) {
                   parsed.user = { ...parsed.user, ...updates };
-                  localStorage.setItem('aero_auth_session', JSON.stringify(parsed));
+                  localStorage.setItem('aerov3_auth_session', JSON.stringify(parsed));
                 }
               }
             } catch (_) {}
@@ -663,7 +678,7 @@ function App() {
         if (isCancelled) return;
 
         // Read user's persisted primary RPC preference
-        const prefKey = `aero_pref_primary_rpc_${activeUid}_${selectedNetworkKey}`;
+        const prefKey = `aerov3_pref_primary_rpc_${activeUid}_${selectedNetworkKey}`;
         let savedPrimaryUrl = null;
         try {
           savedPrimaryUrl = localStorage.getItem(prefKey);
@@ -697,10 +712,10 @@ function App() {
       }
     };
 
-    window.addEventListener('aero_fleet_updated', handleFleetUpdated);
+    window.addEventListener('aerov3_fleet_updated', handleFleetUpdated);
     return () => {
       isCancelled = true;
-      window.removeEventListener('aero_fleet_updated', handleFleetUpdated);
+      window.removeEventListener('aerov3_fleet_updated', handleFleetUpdated);
     };
   }, [selectedNetworkKey, currentUser]);
 
@@ -708,7 +723,7 @@ function App() {
   // Multi-wallet state (Strictly scoped per user)
   const [wallets, setWalletsState] = useState(() => {
     if (!currentUser?.id) return [];
-    const savedActive = localStorage.getItem(`aero_user_${currentUser.id}_wallets`);
+    const savedActive = localStorage.getItem(`aerov3_user_${currentUser.id}_wallets`);
     if (savedActive) {
       try {
         const parsed = JSON.parse(savedActive);
@@ -725,9 +740,9 @@ function App() {
         const normalized = next.map((w, i) => ({ ...w, index: i + 1 }));
         if (currentUser?.id) {
           if (normalized.length > 0) {
-            localStorage.setItem(`aero_user_${currentUser.id}_wallets`, JSON.stringify(normalized));
+            localStorage.setItem(`aerov3_user_${currentUser.id}_wallets`, JSON.stringify(normalized));
           } else {
-            localStorage.removeItem(`aero_user_${currentUser.id}_wallets`);
+            localStorage.removeItem(`aerov3_user_${currentUser.id}_wallets`);
           }
         }
         return normalized;
@@ -746,7 +761,7 @@ function App() {
     const defaults = DEFAULT_RPCS.robinhood;
     let uid = 'guest';
     try {
-      const savedSession = localStorage.getItem('aero_auth_session');
+      const savedSession = localStorage.getItem('aerov3_auth_session');
       uid = savedSession ? JSON.parse(savedSession)?.user?.id || 'guest' : 'guest';
     } catch (e) {}
 
@@ -755,7 +770,7 @@ function App() {
 
     let savedPrimaryUrl = null;
     try {
-      savedPrimaryUrl = localStorage.getItem(`aero_pref_primary_rpc_${uid}_robinhood`);
+      savedPrimaryUrl = localStorage.getItem(`aerov3_pref_primary_rpc_${uid}_robinhood`);
     } catch (e) {}
 
     let foundIdx = -1;
@@ -983,7 +998,7 @@ function App() {
   // Master Funding & Treasury Vault State (Anti-Scam Architecture)
   const [masterWalletAddress, setMasterWalletAddress] = useState(() => {
     try {
-      const saved = localStorage.getItem('aero_master_wallet');
+      const saved = localStorage.getItem('aerov3_master_wallet');
       if (saved) return saved.toLowerCase();
     } catch (e) {}
     return '';
@@ -1000,9 +1015,9 @@ function App() {
         setMasterWalletAddress(addr);
         setSweepDestination(masterWallet.address);
         setVaultDestination(masterWallet.address);
-        localStorage.setItem('aero_master_wallet', addr);
+        localStorage.setItem('aerov3_master_wallet', addr);
       } else {
-        const saved = localStorage.getItem('aero_master_wallet');
+        const saved = localStorage.getItem('aerov3_master_wallet');
         if (saved && wallets.some(w => w.address.toLowerCase() === saved.toLowerCase())) {
           setMasterWalletAddress(saved.toLowerCase());
           setSweepDestination(saved);
@@ -1035,7 +1050,7 @@ function App() {
   // 🌙 DEFAULT IS ALWAYS DARK MODE: Only becomes 'day' if explicitly toggled in active session!
   const [isDayMode, setIsDayMode] = useState(() => {
     try {
-      return sessionStorage.getItem('aero_theme') === 'day';
+      return sessionStorage.getItem('aerov3_theme') === 'day';
     } catch(e) {
       return false;
     }
@@ -1045,14 +1060,14 @@ function App() {
     if (isDayMode) {
       document.body.classList.add('day-mode');
       try {
-        sessionStorage.setItem('aero_theme', 'day');
-        localStorage.setItem('aero_theme', 'day');
+        sessionStorage.setItem('aerov3_theme', 'day');
+        localStorage.setItem('aerov3_theme', 'day');
       } catch(e) {}
     } else {
       document.body.classList.remove('day-mode');
       try {
-        sessionStorage.setItem('aero_theme', 'night');
-        localStorage.setItem('aero_theme', 'night');
+        sessionStorage.setItem('aerov3_theme', 'night');
+        localStorage.setItem('aerov3_theme', 'night');
       } catch(e) {}
     }
   }, [isDayMode]);
@@ -1385,7 +1400,7 @@ function App() {
         || '';
 
       const resolvedSlug = collectionPreviewRef.current?.slug || collectionPreview?.slug || '';
-      const sessionToken = currentUser?.session_token || (typeof localStorage !== 'undefined' ? localStorage.getItem('aero_session_token') : '') || '';
+      const sessionToken = currentUser?.session_token || (typeof localStorage !== 'undefined' ? localStorage.getItem('aerov3_session_token') : '') || '';
 
       const payload = {
         targetEpochMs: Number(targetEpochMs),
@@ -1451,7 +1466,7 @@ function App() {
     const activeId = cloudJobIdRef.current || cloudJobId;
     if (activeId) {
       try {
-        const effectiveToken = (currentUser?.session_token || (typeof localStorage !== 'undefined' ? localStorage.getItem('aero_session_token') : '') || currentUser?.id || 'owner_master_001');
+        const effectiveToken = (currentUser?.session_token || (typeof localStorage !== 'undefined' ? localStorage.getItem('aerov3_session_token') : '') || currentUser?.id || 'owner_master_001');
         const headers = {
           'Content-Type': 'application/json',
           'x-session-token': effectiveToken,
@@ -1528,9 +1543,9 @@ function App() {
                 taskName: activeAllowlistStage?.name ? `Cloud Mint (${activeAllowlistStage.name})` : (job.stage ? `Cloud Mint (${job.stage})` : 'Cloud Mint')
               }));
 
-              const curSaved = JSON.parse(localStorage.getItem('aero_history') || '[]');
+              const curSaved = JSON.parse(localStorage.getItem('aerov3_history') || '[]');
               const updatedHistory = [...newHistoryItems, ...curSaved].slice(0, 200);
-              localStorage.setItem('aero_history', JSON.stringify(updatedHistory));
+              localStorage.setItem('aerov3_history', JSON.stringify(updatedHistory));
               setTxHistory(updatedHistory);
 
               const addCount = Number(mintQuantity) || 1;
@@ -1538,12 +1553,12 @@ function App() {
                 if (!prev) return prev;
                 const updated = { ...prev, total_mints: (prev.total_mints || 0) + addCount };
                 try {
-                  const savedAuth = localStorage.getItem('aero_auth_session');
+                  const savedAuth = localStorage.getItem('aerov3_auth_session');
                   if (savedAuth) {
                     const parsed = JSON.parse(savedAuth);
                     if (parsed?.user) {
                       parsed.user = updated;
-                      localStorage.setItem('aero_auth_session', JSON.stringify(parsed));
+                      localStorage.setItem('aerov3_auth_session', JSON.stringify(parsed));
                     }
                   }
                 } catch (_) {}
@@ -1664,7 +1679,7 @@ function App() {
   // ── 🔑 OpenSea / Reservoir API Key Pool (Anti-429 Shield) ──
   const [apiKeyPool, setApiKeyPool] = useState(() => {
     try {
-      const saved = localStorage.getItem('aero_api_key_pool');
+      const saved = localStorage.getItem('aerov3_api_key_pool');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
     return [
@@ -1797,8 +1812,16 @@ function App() {
   ]);
   const [txHistory, setTxHistory] = useState(() => {
     try {
-      const saved = localStorage.getItem('aero_history');
-      return saved ? JSON.parse(saved) : [];
+      const savedAuth = localStorage.getItem('aerov3_auth_session');
+      let uid = null;
+      if (savedAuth) {
+        try { uid = JSON.parse(savedAuth)?.user?.id; } catch (_) {}
+      }
+      if (uid) {
+        const userHist = localStorage.getItem(`aerov3_u_${uid}_history`);
+        if (userHist) return JSON.parse(userHist);
+      }
+      return [];
     } catch (e) {
       return [];
     }
@@ -1871,7 +1894,7 @@ function App() {
 
       // 1. Load user-scoped local storage strictly for currentUser
       let localWallets = [];
-      const userLocalWallets = localStorage.getItem(`aero_user_${currentUser.id}_wallets`);
+      const userLocalWallets = localStorage.getItem(`aerov3_user_${currentUser.id}_wallets`);
       if (userLocalWallets) {
         try {
           const parsed = JSON.parse(userLocalWallets);
@@ -1906,20 +1929,20 @@ function App() {
             : defaults;
           
           if (cfg.custom_rpcs && Array.isArray(cfg.custom_rpcs) && cfg.custom_rpcs.length > 0) {
-            localStorage.setItem(`aero_u_${currentUser.id}_custom_rpcs_${selectedNetworkKey}`, JSON.stringify(cfg.custom_rpcs));
-            localStorage.setItem('aero_custom_rpcs', JSON.stringify(cfg.custom_rpcs));
+            localStorage.setItem(`aerov3_u_${currentUser.id}_custom_rpcs_${selectedNetworkKey}`, JSON.stringify(cfg.custom_rpcs));
+            localStorage.setItem('aerov3_custom_rpcs', JSON.stringify(cfg.custom_rpcs));
           }
 
           // ⚡ Immediate 3x Ping Startup Trigger
           runStartup3xPingProbe(combinedRpcs);
 
           if (cfg.wallet_names) {
-            localStorage.setItem('aero_wallet_names', JSON.stringify(cfg.wallet_names));
+            localStorage.setItem('aerov3_wallet_names', JSON.stringify(cfg.wallet_names));
           }
 
           if (cfg.master_wallet) {
             setMasterWalletAddress(cfg.master_wallet);
-            localStorage.setItem('aero_master_wallet', cfg.master_wallet);
+            localStorage.setItem('aerov3_master_wallet', cfg.master_wallet);
           }
 
           if (cfg.rpcMode) {
@@ -1927,26 +1950,12 @@ function App() {
           }
 
           // Auto-Restore Transaction History from Cloud
-          if (cfg.txHistory && Array.isArray(cfg.txHistory) && cfg.txHistory.length > 0) {
-            setTxHistory(prev => {
-              const seen = new Set();
-              const merged = [];
-              [...cfg.txHistory, ...(prev || [])].forEach(tx => {
-                const key = (tx.txHash || tx.id || '').toLowerCase();
-                if (key && !seen.has(key)) {
-                  seen.add(key);
-                  merged.push(tx);
-                } else if (!key) {
-                  merged.push(tx);
-                }
-              });
-              const capped = merged.slice(0, 200);
-              localStorage.setItem('aero_history', JSON.stringify(capped));
-              if (currentUser?.id) {
-                localStorage.setItem(`aero_u_${currentUser.id}_history`, JSON.stringify(capped));
-              }
-              return capped;
-            });
+          if (cfg.txHistory && Array.isArray(cfg.txHistory)) {
+            setTxHistory(cfg.txHistory);
+            localStorage.setItem('aerov3_history', JSON.stringify(cfg.txHistory));
+            if (currentUser?.id) {
+              localStorage.setItem(`aerov3_u_${currentUser.id}_history`, JSON.stringify(cfg.txHistory));
+            }
           }
 
           setIsCloudSynced(true);
@@ -2581,7 +2590,7 @@ function App() {
     const defaults = DEFAULT_RPCS[selectedNetworkKey] || [];
     let initialList = defaults;
     if (currentUser?.id) {
-      const userCustomKey = `aero_u_${currentUser.id}_custom_rpcs_${selectedNetworkKey}`;
+      const userCustomKey = `aerov3_u_${currentUser.id}_custom_rpcs_${selectedNetworkKey}`;
       const saved = localStorage.getItem(userCustomKey);
       if (saved) {
         try {
@@ -3022,7 +3031,7 @@ function App() {
       const activeUid = currentUser?.id || 'guest';
       let savedPrimaryUrl = null;
       try {
-        savedPrimaryUrl = localStorage.getItem(`aero_pref_primary_rpc_${activeUid}_${selectedNetworkKey}`);
+        savedPrimaryUrl = localStorage.getItem(`aerov3_pref_primary_rpc_${activeUid}_${selectedNetworkKey}`);
       } catch (e) {}
 
       let targetPrimaryNode = null;
@@ -4257,7 +4266,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     const primaryRpc = updatedList.find(r => r.role === 'primary');
     if (primaryRpc) {
       try {
-        localStorage.setItem(`aero_pref_primary_rpc_${activeUid}_${selectedNetworkKey}`, primaryRpc.url);
+        localStorage.setItem(`aerov3_pref_primary_rpc_${activeUid}_${selectedNetworkKey}`, primaryRpc.url);
       } catch (e) {}
     }
     const customOnly = updatedList
@@ -4293,7 +4302,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     if (!target) return;
     const activeUid = currentUser?.id || 'guest';
     try {
-      localStorage.setItem(`aero_pref_primary_rpc_${activeUid}_${selectedNetworkKey}`, target.url);
+      localStorage.setItem(`aerov3_pref_primary_rpc_${activeUid}_${selectedNetworkKey}`, target.url);
     } catch (e) {}
 
     const updated = rpcEndpoints.map((rpc, i) => {
@@ -4459,7 +4468,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
           if (exists) {
             duplicates.push(address.slice(0, 6) + '...' + address.slice(-4));
           } else {
-            const savedNames = JSON.parse(localStorage.getItem('aero_wallet_names') || '{}');
+            const savedNames = JSON.parse(localStorage.getItem('aerov3_wallet_names') || '{}');
             const customName = savedNames[address.toLowerCase()] || `Wallet #${wallets.length + newWallets.length + 1}`;
 
             newWallets.push({
@@ -4531,12 +4540,12 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
       const payload = {
         userId: currentUser?.id || null,
         activeWallets: wallets,
-        encryptedSession: localStorage.getItem('aero_encrypted_session') || null,
+        encryptedSession: localStorage.getItem('aerov3_encrypted_session') || null,
         rpcs: activeRpcs.length > 0 ? activeRpcs : DEFAULT_RPCS[selectedNetworkKey],
         rpcMode: rpcMode,
         profiles: profiles,
         masterWallet: masterWalletAddress || null,
-        walletNames: JSON.parse(localStorage.getItem('aero_wallet_names') || '{}'),
+        walletNames: JSON.parse(localStorage.getItem('aerov3_wallet_names') || '{}'),
         txHistory: txHistory,
         lastUpdated: new Date().toISOString()
       };
@@ -4564,7 +4573,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
       name: w.name
     }));
     const encrypted = await encryptKeys(simpleList, pwd);
-    localStorage.setItem('aero_encrypted_session', encrypted);
+    localStorage.setItem('aerov3_encrypted_session', encrypted);
 
     // Sync non-custodial encrypted vault to Supabase Cloud
     if (currentUser?.id) {
@@ -4666,7 +4675,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
 
           if (parsed.rpcMode) {
             setRpcMode(parsed.rpcMode);
-            localStorage.setItem('aero_rpc_mode', parsed.rpcMode);
+            localStorage.setItem('aerov3_rpc_mode', parsed.rpcMode);
           }
           log(`📥 Imported ${importedCustomNodes.length} custom RPC endpoints and saved to Cloud Vault!`, 'success');
           playSound('ping');
@@ -4687,10 +4696,10 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
       app: 'AeroMint Premium',
       version: '3.0',
       timestamp: new Date().toISOString(),
-      encryptedSession: localStorage.getItem('aero_encrypted_session') || null,
+      encryptedSession: localStorage.getItem('aerov3_encrypted_session') || null,
       rpcs: rpcEndpoints,
       profiles: profiles,
-      walletNames: JSON.parse(localStorage.getItem('aero_wallet_names') || '{}'),
+      walletNames: JSON.parse(localStorage.getItem('aerov3_wallet_names') || '{}'),
       txHistory: txHistory
     };
     const jsonStr = JSON.stringify(backupData, null, 2);
@@ -4715,7 +4724,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
       try {
         const parsed = JSON.parse(event.target.result);
         if (parsed.encryptedSession) {
-          localStorage.setItem('aero_encrypted_session', parsed.encryptedSession);
+          localStorage.setItem('aerov3_encrypted_session', parsed.encryptedSession);
           setIsSessionSaved(true);
         }
         if (parsed.rpcs && Array.isArray(parsed.rpcs)) {
@@ -4762,18 +4771,18 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
         }
         if (parsed.rpcMode) {
           setRpcMode(parsed.rpcMode);
-          localStorage.setItem('aero_rpc_mode', parsed.rpcMode);
+          localStorage.setItem('aerov3_rpc_mode', parsed.rpcMode);
         }
         if (parsed.profiles) {
           setProfiles(parsed.profiles);
-          localStorage.setItem('aero_profiles', JSON.stringify(parsed.profiles));
+          localStorage.setItem('aerov3_profiles', JSON.stringify(parsed.profiles));
         }
         if (parsed.walletNames) {
-          localStorage.setItem('aero_wallet_names', JSON.stringify(parsed.walletNames));
+          localStorage.setItem('aerov3_wallet_names', JSON.stringify(parsed.walletNames));
         }
         if (parsed.txHistory) {
           setTxHistory(parsed.txHistory);
-          localStorage.setItem('aero_history', JSON.stringify(parsed.txHistory));
+          localStorage.setItem('aerov3_history', JSON.stringify(parsed.txHistory));
         }
 
         await syncUserVaultToBackend();
@@ -4793,7 +4802,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     if (!ok) return;
 
     localStorage.clear();
-    localStorage.removeItem('aero_active_wallets');
+    localStorage.removeItem('aerov3_active_wallets');
     setWallets([]);
     setProfiles([]);
     setTxHistory([]);
@@ -4944,7 +4953,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
   }
 
   async function handleLoadEncryptedSession() {
-    const saved = localStorage.getItem('aero_encrypted_session');
+    const saved = localStorage.getItem('aerov3_encrypted_session');
     if (!saved) {
       log('No saved session found in this browser storage.', 'error');
       return;
@@ -4969,7 +4978,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
           usd = (val * nativeUsdPrice).toFixed(2);
         } catch (e) {}
 
-        const savedNames = JSON.parse(localStorage.getItem('aero_wallet_names') || '{}');
+        const savedNames = JSON.parse(localStorage.getItem('aerov3_wallet_names') || '{}');
         const customName = item.name || savedNames[derivedWallet.address.toLowerCase()] || `Wallet #${i + 1}`;
 
         return {
@@ -5001,26 +5010,26 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     const ok = window.confirm("⚠️ DANGER ZONE: Are you sure you want to permanently clear all loaded wallets and delete the encrypted session from this browser? This action cannot be undone!");
     if (!ok) return;
 
-    localStorage.removeItem('aero_active_wallets');
+    localStorage.removeItem('aerov3_active_wallets');
     setWallets([]);
     setWalletPassword('');
     setDecryptPasswordInput('');
     setIsSessionSaved(false);
-    localStorage.removeItem('aero_encrypted_session');
+    localStorage.removeItem('aerov3_encrypted_session');
     log('All private keys and session storage cleared.', 'success');
   }
 
   function handleSetMasterFundingWallet(address) {
     if (!address) {
       setMasterWalletAddress('');
-      localStorage.removeItem('aero_master_wallet');
+      localStorage.removeItem('aerov3_master_wallet');
       setWallets(prev => prev.map(w => ({ ...w, isMaster: false })));
       log('👑 Master Funding Wallet unassigned.', 'info');
       return;
     }
     const normalized = address.toLowerCase();
     setMasterWalletAddress(normalized);
-    localStorage.setItem('aero_master_wallet', normalized);
+    localStorage.setItem('aerov3_master_wallet', normalized);
     setSweepDestination(address);
     setVaultDestination(address);
 
@@ -5146,9 +5155,9 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     const updated = wallets.map(w => w.address.toLowerCase() === address.toLowerCase() ? { ...w, name: newName } : w);
     setWallets(updated);
     
-    const savedNames = JSON.parse(localStorage.getItem('aero_wallet_names') || '{}');
+    const savedNames = JSON.parse(localStorage.getItem('aerov3_wallet_names') || '{}');
     savedNames[address.toLowerCase()] = newName;
-    localStorage.setItem('aero_wallet_names', JSON.stringify(savedNames));
+    localStorage.setItem('aerov3_wallet_names', JSON.stringify(savedNames));
 
     if (isSessionSaved && walletPassword) {
       saveSessionEncrypted(updated, walletPassword);
@@ -5945,10 +5954,10 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
             error: '',
             taskName: selectedFunctionName
           };
-          const hist = JSON.parse(localStorage.getItem('aero_history') || '[]');
+          const hist = JSON.parse(localStorage.getItem('aerov3_history') || '[]');
           hist.unshift(historyItem);
           const capped = hist.slice(0, 200); // H-03 FIX: Cap at 200 to prevent localStorage quota overflow
-          localStorage.setItem('aero_history', JSON.stringify(capped));
+          localStorage.setItem('aerov3_history', JSON.stringify(capped));
           setTxHistory(prev => [historyItem, ...prev]);
           syncUserVaultToBackend();
 
@@ -6006,9 +6015,9 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
             error: revertMsg || 'Execution Reverted on-chain',
             taskName: selectedFunctionName
           };
-          const hist = JSON.parse(localStorage.getItem('aero_history') || '[]');
+          const hist = JSON.parse(localStorage.getItem('aerov3_history') || '[]');
           hist.unshift(historyItem);
-          localStorage.setItem('aero_history', JSON.stringify(hist));
+          localStorage.setItem('aerov3_history', JSON.stringify(hist));
           setTxHistory(prev => [historyItem, ...prev]);
 
           pendingTxMap.current.delete(wallet.index);
@@ -6039,9 +6048,9 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
               error: '',
               taskName: selectedFunctionName
             };
-            const hList = JSON.parse(localStorage.getItem('aero_history') || '[]');
+            const hList = JSON.parse(localStorage.getItem('aerov3_history') || '[]');
             hList.unshift(nonceHistoryItem);
-            localStorage.setItem('aero_history', JSON.stringify(hList.slice(0, 200)));
+            localStorage.setItem('aerov3_history', JSON.stringify(hList.slice(0, 200)));
             setTxHistory(prev => [nonceHistoryItem, ...prev]);
             break;
           }
@@ -6724,7 +6733,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     const updated = [item, ...txHistory];
     setTxHistory(updated);
     if (currentUser?.id) {
-      localStorage.setItem(`aero_u_${currentUser.id}_history`, JSON.stringify(updated));
+      localStorage.setItem(`aerov3_u_${currentUser.id}_history`, JSON.stringify(updated));
       if (item.status === 'SUCCESS' || item.status === 'CONFIRMED') {
         incrementUserMintCount(currentUser.id, 1);
       }
@@ -8244,7 +8253,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     };
     const updated = [...profiles, profile];
     setProfiles(updated);
-    localStorage.setItem('aero_profiles', JSON.stringify(updated));
+    localStorage.setItem('aerov3_profiles', JSON.stringify(updated));
     setNewProfileName('');
     log(`Profile "${profile.name}" saved successfully.`, 'success');
   }
@@ -8272,7 +8281,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
   function handleDeleteProfile(name) {
     const updated = profiles.filter(p => p.name !== name);
     setProfiles(updated);
-    localStorage.setItem('aero_profiles', JSON.stringify(updated));
+    localStorage.setItem('aerov3_profiles', JSON.stringify(updated));
     log(`Profile "${name}" deleted.`, 'info');
   }
 
@@ -8296,7 +8305,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
         let activeWallets = loginConfig?.wallets;
         if (!activeWallets || !Array.isArray(activeWallets) || activeWallets.length === 0) {
           try {
-            const saved = localStorage.getItem(`aero_user_${user.id}_wallets`);
+            const saved = localStorage.getItem(`aerov3_user_${user.id}_wallets`);
             if (saved) activeWallets = JSON.parse(saved);
           } catch (e) {}
         }
@@ -8314,7 +8323,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
         }
         if (!customRpcs) {
           try {
-            const saved = localStorage.getItem(`aero_u_${user.id}_custom_rpcs_${selectedNetworkKey}`) || localStorage.getItem('aero_custom_rpcs');
+            const saved = localStorage.getItem(`aerov3_u_${user.id}_custom_rpcs_${selectedNetworkKey}`) || localStorage.getItem('aerov3_custom_rpcs');
             if (saved) customRpcs = JSON.parse(saved);
           } catch (e) {}
         }
@@ -8332,25 +8341,25 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
         }
 
         if (loginConfig?.wallet_names) {
-          localStorage.setItem('aero_wallet_names', JSON.stringify(loginConfig.wallet_names));
+          localStorage.setItem('aerov3_wallet_names', JSON.stringify(loginConfig.wallet_names));
         }
 
         if (loginConfig?.master_wallet) {
           setMasterWalletAddress(loginConfig.master_wallet);
-          localStorage.setItem('aero_master_wallet', loginConfig.master_wallet);
+          localStorage.setItem('aerov3_master_wallet', loginConfig.master_wallet);
         }
 
         if (loginConfig?.txHistory && Array.isArray(loginConfig.txHistory)) {
           setTxHistory(loginConfig.txHistory);
-          localStorage.setItem('aero_history', JSON.stringify(loginConfig.txHistory));
+          localStorage.setItem('aerov3_history', JSON.stringify(loginConfig.txHistory));
         } else {
           try {
-            const savedHist = localStorage.getItem(`aero_u_${user.id}_history`);
+            const savedHist = localStorage.getItem(`aerov3_u_${user.id}_history`);
             if (savedHist) {
               const parsedHist = JSON.parse(savedHist);
               if (Array.isArray(parsedHist)) {
                 setTxHistory(parsedHist);
-                localStorage.setItem('aero_history', JSON.stringify(parsedHist));
+                localStorage.setItem('aerov3_history', JSON.stringify(parsedHist));
               }
             }
           } catch (_) {}
@@ -8501,7 +8510,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
             onImportWallets={(newWallets) => {
               setWallets(newWallets);
               if (currentUser?.id) {
-                localStorage.setItem(`aero_user_${currentUser.id}_wallets`, JSON.stringify(newWallets));
+                localStorage.setItem(`aerov3_user_${currentUser.id}_wallets`, JSON.stringify(newWallets));
               }
             }}
             onRestoreRpcs={(newRpcs) => {
@@ -9483,7 +9492,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                         className={`blast-target-btn ${blastNodeCount === 3 ? 'active' : ''}`}
                         onClick={() => {
                           setBlastNodeCount(3);
-                          localStorage.setItem('aero_blast_count', '3');
+                          localStorage.setItem('aerov3_blast_count', '3');
                           log('⚡ Multi-Blast Target set to: Top 3 Fastest RPCs (~150ms speed)', 'info');
                         }}
                       >
@@ -9494,7 +9503,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                         className={`blast-target-btn ${blastNodeCount === 5 ? 'active' : ''}`}
                         onClick={() => {
                           setBlastNodeCount(5);
-                          localStorage.setItem('aero_blast_count', '5');
+                          localStorage.setItem('aerov3_blast_count', '5');
                           log('🛡️ Multi-Blast Target set to: Top 5 RPCs (Max Redundancy)', 'info');
                         }}
                       >
@@ -9505,7 +9514,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                         className={`blast-target-btn ${blastNodeCount >= 10 ? 'active' : ''}`}
                         onClick={() => {
                           setBlastNodeCount(10);
-                          localStorage.setItem('aero_blast_count', '10');
+                          localStorage.setItem('aerov3_blast_count', '10');
                           log('🌐 Multi-Blast Target set to: All Active Nodes', 'info');
                         }}
                       >
@@ -11352,7 +11361,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                   type="radio" 
                   name="rpcMode" 
                   checked={rpcMode === 'blast'} 
-                  onChange={() => { setRpcMode('blast'); localStorage.setItem('aero_rpc_mode', 'blast'); syncUserVaultToBackend(); }} 
+                  onChange={() => { setRpcMode('blast'); localStorage.setItem('aerov3_rpc_mode', 'blast'); syncUserVaultToBackend(); }} 
                 />
                 <div>
                   <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: rpcMode === 'blast' ? 'var(--accent-purple)' : '#fff' }}>
@@ -11378,7 +11387,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                   type="radio" 
                   name="rpcMode" 
                   checked={rpcMode === 'fastest'} 
-                  onChange={() => { setRpcMode('fastest'); localStorage.setItem('aero_rpc_mode', 'fastest'); syncUserVaultToBackend(); }} 
+                  onChange={() => { setRpcMode('fastest'); localStorage.setItem('aerov3_rpc_mode', 'fastest'); syncUserVaultToBackend(); }} 
                 />
                 <div>
                   <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: rpcMode === 'fastest' ? '#38bdf8' : '#fff' }}>
@@ -11404,7 +11413,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                   type="radio" 
                   name="rpcMode" 
                   checked={rpcMode === 'primary'} 
-                  onChange={() => { setRpcMode('primary'); localStorage.setItem('aero_rpc_mode', 'primary'); syncUserVaultToBackend(); }} 
+                  onChange={() => { setRpcMode('primary'); localStorage.setItem('aerov3_rpc_mode', 'primary'); syncUserVaultToBackend(); }} 
                 />
                 <div>
                   <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#fff' }}>
@@ -12169,7 +12178,10 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                   style={{ fontSize: '0.78rem', padding: '0.35rem 0.65rem', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#ef4444' }} 
                   onClick={() => {
                     setTxHistory([]);
-                    localStorage.removeItem('aero_history');
+                    localStorage.removeItem('aerov3_history');
+                    if (currentUser?.id) {
+                      localStorage.removeItem(`aerov3_u_${currentUser.id}_history`);
+                    }
                     log('Transaction history records deleted.', 'info');
                   }}
                 >

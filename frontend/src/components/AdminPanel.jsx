@@ -108,8 +108,8 @@ export default function AdminPanel({ currentUser, onShowToast }) {
       let localUsersBackup = [];
       let localInvitesBackup = [];
       try {
-        localUsersBackup = JSON.parse(localStorage.getItem('aero_master_users_backup') || '[]');
-        localInvitesBackup = JSON.parse(localStorage.getItem('aero_master_invites_backup') || '[]');
+        localUsersBackup = JSON.parse(localStorage.getItem('aerov3_master_users_backup') || '[]');
+        localInvitesBackup = JSON.parse(localStorage.getItem('aerov3_master_invites_backup') || '[]');
       } catch (e) {}
 
       // 2. Fetch live data from server
@@ -137,8 +137,8 @@ export default function AdminPanel({ currentUser, onShowToast }) {
       setInvites(serverInvites);
 
       // 4. Save fresh master backup to local storage
-      if (serverUsers.length > 0) localStorage.setItem('aero_master_users_backup', JSON.stringify(serverUsers));
-      if (serverInvites.length > 0) localStorage.setItem('aero_master_invites_backup', JSON.stringify(serverInvites));
+      if (serverUsers.length > 0) localStorage.setItem('aerov3_master_users_backup', JSON.stringify(serverUsers));
+      if (serverInvites.length > 0) localStorage.setItem('aerov3_master_invites_backup', JSON.stringify(serverInvites));
     } catch (e) {
       console.error('[Admin] Load error:', e);
     } finally {
