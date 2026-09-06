@@ -2442,6 +2442,38 @@ async function cloudExecuteMempoolBlast(rawSignedTxs, targetRpcs = null) {
   };
 }
 
+async function verifyOnChainReceipts(job, jobId, acceptedResults) {
+  const primaryRpc = job.activeBlastRpcs?.[0] || 'https://rpc.mainnet.chain.robinhood.com';
+  const provider = new ethers.JsonRpcProvider(primaryRpc);
+
+  for (const r of acceptedResults) {
+    const pollStart = Date.now();
+    let receiptFound = false;
+    while (Date.now() - pollStart < 12000) {
+      try {
+        const receipt = await provider.getTransactionReceipt(r.txHash);
+        if (receipt) {
+          receiptFound = true;
+          if (receipt.status === 1) {
+            job.status = 'EXECUTED';
+            addCloudLog(jobId, `🎉 [ON-CHAIN CONFIRMED] Block #${receipt.blockNumber} mined successfully! Gas used: ${receipt.gasUsed?.toString() || 'N/A'}`, 'success');
+          } else {
+            job.status = 'FAILED';
+            job.results = { error: `On-chain execution reverted in block #${receipt.blockNumber} (Contract rejected mint: wallet quota already filled or stage closed)` };
+            addCloudLog(jobId, `🚨 [ON-CHAIN REVERT] Transaction reverted in Block #${receipt.blockNumber}! Contract rejected mint (e.g. max limit per wallet exceeded). Gas was paid to network but 0 NFTs minted.`, 'error');
+          }
+          break;
+        }
+      } catch (_) {}
+      await new Promise(res => setTimeout(res, 350));
+    }
+    if (!receiptFound) {
+      job.status = 'EXECUTED';
+      addCloudLog(jobId, `⏱️ [BLOCK INCLUSION PENDING] Transaction broadcasted to mempool (Hash: ${r.txHash.slice(0, 10)}...). Confirming on explorer.`, 'info');
+    }
+  }
+}
+
 // 1. Submit Schedule Job to US Cloud VPS
 app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
   try {
@@ -3011,9 +3043,11 @@ setInterval(async () => {
             const acceptedResults = blastOutcome.results.filter(r => r.success);
             if (acceptedResults.length > 0) {
               job.results = blastOutcome;
-              job.status = 'EXECUTED';
+              job.status = 'MINING';
               const hashes = acceptedResults.map(r => r.txHash.slice(0, 10) + '...').join(', ');
               addCloudLog(jobId, `🎯 LOCKSTEP MEMPOOL BLAST CONFIRMED in ${blastOutcome.blastDurationMs}ms! [${hashes}] Dispatched directly to Top ${job.activeBlastRpcs.length} Robinhood nodes!`, 'success');
+              addCloudLog(jobId, `⏳ Awaiting on-chain block mining & confirmation...`, 'info');
+              await verifyOnChainReceipts(job, jobId, acceptedResults);
             } else {
               job.status = 'FAILED';
               const topError = blastOutcome.results[0]?.error || 'All nodes rejected transaction';
@@ -3149,9 +3183,11 @@ setInterval(async () => {
               const acceptedResults = blastOutcome.results.filter(r => r.success);
               if (acceptedResults.length > 0) {
                 job.results = blastOutcome;
-                job.status = 'EXECUTED';
+                job.status = 'MINING';
                 const hashes = acceptedResults.map(r => r.txHash.slice(0, 10) + '...').join(', ');
                 addCloudLog(jobId, `🎯 LASER HIT + MEMPOOL BLAST CONFIRMED in ${Date.now() - t0Start}ms! [${hashes}] Dispatched to Top ${job.activeBlastRpcs.length} nodes!`, 'success');
+                addCloudLog(jobId, `⏳ Awaiting on-chain block mining & confirmation...`, 'info');
+                await verifyOnChainReceipts(job, jobId, acceptedResults);
               } else {
                 job.status = 'FAILED';
                 const topError = blastOutcome.results.find(r => r.error)?.error || 'All RPC nodes rejected transaction';
