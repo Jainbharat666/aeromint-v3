@@ -1324,10 +1324,18 @@ function App() {
         ? [...activeEndpoints].sort((a, b) => (a.latency || 999) - (b.latency || 999))
         : [{ name: 'Robinhood Official RPC', url: fallbackRpc, latency: 50 }];
 
+      const resolvedContractAddress = (detectedContracts && detectedContracts[selectedContractIndex]?.address)
+        || collectionPreviewRef.current?.contractAddress
+        || collectionPreview?.contractAddress
+        || '';
+
+      const resolvedSlug = collectionPreviewRef.current?.slug || collectionPreview?.slug || '';
+      const sessionToken = currentUser?.session_token || (typeof localStorage !== 'undefined' ? localStorage.getItem('aero_session_token') : '') || '';
+
       const payload = {
         targetEpochMs: Number(targetEpochMs),
-        slug: collectionPreviewRef.current?.slug || collectionPreview?.slug || customSlugInput || '',
-        contractAddress: activeContract?.address || collectionPreviewRef.current?.contractAddress || collectionPreview?.contractAddress || '',
+        slug: resolvedSlug,
+        contractAddress: resolvedContractAddress,
         seaDropAddress: getSeaDropAddress(selectedNetworkKey),
         stage: stageToUse,
         pricePerNft: String(priceToUse),
@@ -1351,7 +1359,7 @@ function App() {
 
       const headers = {
         'Content-Type': 'application/json',
-        'x-session-token': userSessionToken || '',
+        'x-session-token': sessionToken,
         ...(currentUser?.email ? { 'x-user-email': currentUser.email } : { 'x-user-email': 'jainbharat666@gmail.com' }),
         ...(currentUser?.id ? { 'x-user-id': currentUser.id } : { 'x-user-id': 'owner_master_001' }),
         ...(currentUser?.session_token ? { 'Authorization': `Bearer ${currentUser.session_token}` } : {})
@@ -2004,7 +2012,7 @@ function App() {
         try {
           hasSiweAuthenticatedRef.current = true;
           // 🔧 USE REF not stale state — collectionPreviewRef always has live value
-          const targetSlug = collectionPreviewRef.current?.slug || customSlugInput;
+          const targetSlug = collectionPreviewRef.current?.slug || collectionPreview?.slug || '';
           const activeChainId = NETWORKS[selectedNetworkKey]?.chainId || 4663;
           const currentWallets = walletsRef.current;
           const currentMasterAddr = masterWalletAddressRef.current;
