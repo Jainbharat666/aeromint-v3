@@ -276,15 +276,17 @@ const EXPLORER_APIS = {
   ethereum: 'https://eth.blockscout.com/api'
 };
 
+const US_CLOUD_BACKEND_SSL = 'https://api.aeromint.xyz';
 const US_CLOUD_VPS_URL = 'http://129.80.65.56:3001';
-const BACKEND_BASE = import.meta.env.VITE_BACKEND_URL || ((typeof window !== 'undefined' && window.location.protocol === 'https:') ? '' : US_CLOUD_VPS_URL);
+const BACKEND_BASE = import.meta.env.VITE_BACKEND_URL || ((typeof window !== 'undefined' && window.location.protocol === 'https:') ? US_CLOUD_BACKEND_SSL : US_CLOUD_VPS_URL);
 const IS_BACKEND_AVAILABLE = typeof window !== 'undefined' && (BACKEND_BASE !== null && BACKEND_BASE !== undefined);
 
 async function apiFetch(path, options = {}) {
   try {
     const url = path.startsWith('http') ? path : `${BACKEND_BASE}${path}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const timeoutMs = options.timeout || 10000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const res = await fetch(url, { ...options, signal: controller.signal });
     clearTimeout(timeoutId);
     return await res.json();
@@ -2669,7 +2671,7 @@ function App() {
     try {
       if (IS_BACKEND_AVAILABLE) {
         const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), 2500);
+        const id = setTimeout(() => controller.abort(), 7000);
         const res = await fetch(`${BACKEND_BASE}/api/benchmark-rpcs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2708,7 +2710,7 @@ function App() {
     try {
       if (IS_BACKEND_AVAILABLE) {
         const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), 3000);
+        const id = setTimeout(() => controller.abort(), 7000);
         const res = await fetch(`${BACKEND_BASE}/api/benchmark-rpcs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2798,7 +2800,7 @@ function App() {
       try {
         if (IS_BACKEND_AVAILABLE) {
           const controller = new AbortController();
-          const tid = setTimeout(() => controller.abort(), 3500);
+          const tid = setTimeout(() => controller.abort(), 7000);
           const res = await fetch(`${BACKEND_BASE}/api/benchmark-rpcs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2995,7 +2997,7 @@ function App() {
     try {
       if (IS_BACKEND_AVAILABLE) {
         const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 3500);
+        const tid = setTimeout(() => controller.abort(), 7000);
         const res = await fetch(`${BACKEND_BASE}/api/benchmark-rpcs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
