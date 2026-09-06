@@ -471,6 +471,19 @@ function getAuthHeaders() {
   return headers;
 }
 
+export async function fetchUserTxHistory(userId) {
+  try {
+    const res = await fetch(`${BACKEND_BASE}/api/users/${encodeURIComponent(userId)}/history`, {
+      headers: getAuthHeaders()
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return { success: true, txHistory: data.txHistory || [] };
+    }
+  } catch (e) {}
+  return { success: false, txHistory: [] };
+}
+
 export async function fetchAllUserProfiles() {
   try {
     const res = await fetch(`${BACKEND_BASE}/api/users`, {

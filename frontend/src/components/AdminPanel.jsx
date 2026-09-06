@@ -13,7 +13,8 @@ import {
   fetchFleetRpcs,
   saveFleetRpc,
   deleteFleetRpc,
-  toggleFleetRpcActive
+  toggleFleetRpcActive,
+  fetchUserTxHistory
 } from '../lib/supabase';
 import CyberModal from './CyberModal';
 
@@ -62,6 +63,27 @@ export default function AdminPanel({ currentUser, onShowToast }) {
     onConfirm: null,
     onCancel: () => setCyberModal(prev => ({ ...prev, isOpen: false }))
   });
+
+  // User Transaction History Modal State
+  const [historyModalUser, setHistoryModalUser] = useState(null);
+  const [userHistoryLogs, setUserHistoryLogs] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const handleViewUserHistory = async (u) => {
+    setHistoryModalUser(u);
+    setHistoryLoading(true);
+    setUserHistoryLogs([]);
+    try {
+      const res = await fetchUserTxHistory(u.user_id || u.id);
+      if (res?.success && Array.isArray(res.txHistory)) {
+        setUserHistoryLogs(res.txHistory);
+      }
+    } catch (e) {
+      console.error('Failed to fetch history:', e);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   async function loadFleetData(networkKey) {
     try {
@@ -1060,8 +1082,25 @@ export default function AdminPanel({ currentUser, onShowToast }) {
                           </button>
                         </div>
 
-                        {/* Ban & Delete Controls */}
+                        {/* Ban, Delete & History Controls */}
                         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                          <button
+                            onClick={() => handleViewUserHistory(u)}
+                            title="View User Mint History & Receipts"
+                            style={{
+                              padding: '3px 8px',
+                              borderRadius: '4px',
+                              background: 'rgba(56, 189, 248, 0.15)',
+                              border: '1px solid rgba(56, 189, 248, 0.35)',
+                              color: '#38bdf8',
+                              fontSize: '0.72rem',
+                              fontWeight: '700',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            📜 History
+                          </button>
+
                           <button
                             onClick={() => handleToggleBan(u.user_id, u.is_banned)}
                             disabled={actionLoadingId === `ban_${u.user_id}`}
@@ -1097,6 +1136,26 @@ export default function AdminPanel({ currentUser, onShowToast }) {
                           </button>
                         </div>
 
+                      </div>
+                    )}
+
+                    {isOwner && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                        <button
+                          onClick={() => handleViewUserHistory(u)}
+                          style={{
+                            padding: '3px 8px',
+                            borderRadius: '4px',
+                            background: 'rgba(255, 147, 69, 0.15)',
+                            border: '1px solid rgba(255, 147, 69, 0.35)',
+                            color: '#FF9345',
+                            fontSize: '0.72rem',
+                            fontWeight: '700',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          📜 Owner History
+                        </button>
                       </div>
                     )}
 
@@ -1404,6 +1463,171 @@ export default function AdminPanel({ currentUser, onShowToast }) {
         onConfirm={cyberModal.onConfirm}
         onCancel={cyberModal.onCancel}
       />
+
+      {/* 📜 User Transaction History Modal */}
+      {historyModalUser && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(5, 7, 13, 0.85)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 99999,
+          padding: '20px'
+        }}
+        onClick={(e) => { if (e.target === e.currentTarget) setHistoryModalUser(null); }}
+        >
+          <div style={{
+            background: '#0c0f18',
+            border: '1px solid rgba(56, 189, 248, 0.35)',
+            borderRadius: '14px',
+            width: '100%',
+            maxWidth: '860px',
+            maxHeight: '85vh',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.7), 0 0 30px rgba(56, 189, 248, 0.15)',
+            overflow: 'hidden'
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              padding: '16px 20px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'rgba(255, 255, 255, 0.02)'
+            }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '1.2rem' }}>📜</span>
+                  <h3 style={{ margin: 0, color: '#fff', fontSize: '1.05rem', fontWeight: 800 }}>
+                    Mint Audit History: <span style={{ color: '#38bdf8' }}>{historyModalUser.email}</span>
+                  </h3>
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '3px', fontFamily: 'monospace' }}>
+                  User ID: <strong style={{ color: '#cbd5e1' }}>{historyModalUser.user_id || historyModalUser.id}</strong> • Total Mints: <strong style={{ color: '#10b981' }}>{historyModalUser.total_mints || 0}</strong> • Max Quota: <strong style={{ color: '#c084fc' }}>{historyModalUser.max_mints_allowed > 0 ? historyModalUser.max_mints_allowed : '∞'}</strong>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setHistoryModalUser(null)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: 'none',
+                  color: '#9ca3af',
+                  fontSize: '1.2rem',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
+              {historyLoading ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: '#38bdf8', fontSize: '0.85rem' }}>
+                  ⚡ Fetching cloud transaction ledger from US VPS...
+                </div>
+              ) : userHistoryLogs.length === 0 ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280', fontSize: '0.85rem' }}>
+                  No transaction records found for this account in Cloud Database.
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', textAlign: 'left' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)', color: '#9ca3af' }}>
+                        <th style={{ padding: '8px 10px' }}>Time</th>
+                        <th style={{ padding: '8px 10px' }}>Task / Stage</th>
+                        <th style={{ padding: '8px 10px' }}>Wallet</th>
+                        <th style={{ padding: '8px 10px' }}>Contract</th>
+                        <th style={{ padding: '8px 10px' }}>Gas Spent</th>
+                        <th style={{ padding: '8px 10px' }}>Status</th>
+                        <th style={{ padding: '8px 10px' }}>Explorer Proof</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {userHistoryLogs.map((tx, tidx) => (
+                        <tr key={tx.id || tidx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)', color: '#d1d5db' }}>
+                          <td style={{ padding: '8px 10px', whiteSpace: 'nowrap', color: '#9ca3af' }}>{tx.time || '—'}</td>
+                          <td style={{ padding: '8px 10px', fontWeight: 'bold', color: '#f59e0b' }}>{tx.taskName || 'Mint'}</td>
+                          <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#cbd5e1' }}>
+                            {tx.wallet ? `${tx.wallet.slice(0, 6)}...${tx.wallet.slice(-4)}` : '—'}
+                          </td>
+                          <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#cbd5e1' }}>
+                            {tx.contract ? `${tx.contract.slice(0, 6)}...${tx.contract.slice(-4)}` : '—'}
+                          </td>
+                          <td style={{ padding: '8px 10px', color: '#10b981' }}>
+                            {tx.gasUsedNative ? `${tx.gasUsedNative} ETH` : '—'}
+                            {tx.gasUsedUsd ? ` ($${tx.gasUsedUsd})` : ''}
+                          </td>
+                          <td style={{ padding: '8px 10px' }}>
+                            <span style={{
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              background: tx.status === 'SUCCESS' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                              color: tx.status === 'SUCCESS' ? '#10b981' : '#ef4444',
+                              fontWeight: 'bold',
+                              fontSize: '0.7rem'
+                            }}>
+                              {tx.status || 'SUCCESS'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '8px 10px' }}>
+                            {tx.txHash && tx.txHash.startsWith('0x') ? (
+                              <a
+                                href={`https://explorer.mainnet.chain.robinhood.com/tx/${tx.txHash}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: '#38bdf8', textDecoration: 'none', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '3px' }}
+                              >
+                                <span>{tx.txHash.slice(0, 8)}...</span>
+                                <span>↗</span>
+                              </a>
+                            ) : (
+                              <span style={{ color: '#6b7280' }}>—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{
+              padding: '12px 20px',
+              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              background: 'rgba(255, 255, 255, 0.02)'
+            }}>
+              <button
+                onClick={() => setHistoryModalUser(null)}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  color: '#fff',
+                  fontSize: '0.8rem',
+                  cursor: 'pointer'
+                }}
+              >
+                Close Audit Log
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
