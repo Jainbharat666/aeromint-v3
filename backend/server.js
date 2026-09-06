@@ -2842,14 +2842,26 @@ setInterval(async () => {
               const txData = sub?.data || '0x';
               const val = sub?.value !== undefined ? BigInt(sub.value) : (job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
 
+              // Zero-Revert Balance Protection: Clamp maxFee if wallet balance cannot support hyped priority fee
+              let walletMaxFee = maxFee;
+              let walletMaxPriority = maxPriority;
+              if (w.balance && w.balance > val) {
+                const availForGas = w.balance - val;
+                const maxAffordableFee = availForGas / 220000n;
+                if (maxAffordableFee < walletMaxFee && maxAffordableFee > (baseGas * 105n / 100n)) {
+                  walletMaxFee = maxAffordableFee;
+                  walletMaxPriority = walletMaxFee > baseGas ? (walletMaxFee - baseGas) / 2n : 10000000n;
+                }
+              }
+
               const tx = {
                 to: toAddr,
                 data: txData,
                 value: val,
                 nonce: w.nonce,
                 gasLimit: 220000n,
-                maxFeePerGas: maxFee,
-                maxPriorityFeePerGas: maxPriority,
+                maxFeePerGas: walletMaxFee,
+                maxPriorityFeePerGas: walletMaxPriority,
                 chainId: 4663,
                 type: 2
               };
@@ -2878,9 +2890,18 @@ setInterval(async () => {
         try {
           if (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) {
             const blastOutcome = await cloudExecuteMempoolBlast(job.preSignedRawTxs, job.activeBlastRpcs);
-            job.results = blastOutcome;
-            job.status = 'EXECUTED';
-            addCloudLog(jobId, `🎯 LOCKSTEP MEMPOOL BLAST CONFIRMED in ${blastOutcome.blastDurationMs}ms! Dispatched directly to Top ${job.activeBlastRpcs.length} Robinhood nodes!`, 'success');
+            const acceptedResults = blastOutcome.results.filter(r => r.success);
+            if (acceptedResults.length > 0) {
+              job.results = blastOutcome;
+              job.status = 'EXECUTED';
+              const hashes = acceptedResults.map(r => r.txHash.slice(0, 10) + '...').join(', ');
+              addCloudLog(jobId, `🎯 LOCKSTEP MEMPOOL BLAST CONFIRMED in ${blastOutcome.blastDurationMs}ms! [${hashes}] Dispatched directly to Top ${job.activeBlastRpcs.length} Robinhood nodes!`, 'success');
+            } else {
+              job.status = 'FAILED';
+              const topError = blastOutcome.results[0]?.error || 'All nodes rejected transaction';
+              job.results = { error: topError, ...blastOutcome };
+              addCloudLog(jobId, `❌ Mempool Rejected: ${topError}`, 'error');
+            }
           } else {
             addCloudLog(jobId, `⚡ Engaging 6-Key Staggered Laser Pipeline from Ashburn Edge...`, 'warning');
 
@@ -2935,14 +2956,27 @@ setInterval(async () => {
                 ? BigInt(sub.value)
                 : (job.pricePerNft && job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
 
+              // Zero-Revert Balance Protection: Clamp maxFee if wallet balance cannot support hyped priority fee
+              let walletMaxFee = job.computedMaxFee || ethers.parseUnits('1.0', 'gwei');
+              let walletMaxPriority = job.computedMaxPriority || ethers.parseUnits('0.5', 'gwei');
+              if (w.balance && w.balance > val) {
+                const availForGas = w.balance - val;
+                const maxAffordableFee = availForGas / 220000n;
+                const baseGasFloor = 100000000n; // 0.1 gwei base
+                if (maxAffordableFee < walletMaxFee && maxAffordableFee > (baseGasFloor * 105n / 100n)) {
+                  walletMaxFee = maxAffordableFee;
+                  walletMaxPriority = walletMaxFee > baseGasFloor ? (walletMaxFee - baseGasFloor) / 2n : 10000000n;
+                }
+              }
+
               const tx = {
                 to: toAddr,
                 data: txData,
                 value: val,
                 nonce: w.nonce || 0,
                 gasLimit: 220000n,
-                maxFeePerGas: job.computedMaxFee || ethers.parseUnits('1.0', 'gwei'),
-                maxPriorityFeePerGas: job.computedMaxPriority || ethers.parseUnits('0.5', 'gwei'),
+                maxFeePerGas: walletMaxFee,
+                maxPriorityFeePerGas: walletMaxPriority,
                 chainId: 4663,
                 type: 2
               };
@@ -2953,9 +2987,18 @@ setInterval(async () => {
 
             if (signedRawTxs.length > 0) {
               const blastOutcome = await cloudExecuteMempoolBlast(signedRawTxs, job.activeBlastRpcs);
-              job.results = blastOutcome;
-              job.status = 'EXECUTED';
-              addCloudLog(jobId, `🎯 LASER HIT + MEMPOOL BLAST CONFIRMED in ${Date.now() - t0Start}ms! Dispatched to Top ${job.activeBlastRpcs.length} nodes!`, 'success');
+              const acceptedResults = blastOutcome.results.filter(r => r.success);
+              if (acceptedResults.length > 0) {
+                job.results = blastOutcome;
+                job.status = 'EXECUTED';
+                const hashes = acceptedResults.map(r => r.txHash.slice(0, 10) + '...').join(', ');
+                addCloudLog(jobId, `🎯 LASER HIT + MEMPOOL BLAST CONFIRMED in ${Date.now() - t0Start}ms! [${hashes}] Dispatched to Top ${job.activeBlastRpcs.length} nodes!`, 'success');
+              } else {
+                job.status = 'FAILED';
+                const topError = blastOutcome.results.find(r => r.error)?.error || 'All RPC nodes rejected transaction';
+                job.results = { error: topError, ...blastOutcome };
+                addCloudLog(jobId, `❌ Mempool Rejected: ${topError}`, 'error');
+              }
             } else {
               job.status = 'FAILED';
               job.results = { error: 'Could not secure OpenSea signature at T-0 (Allowlist stage inactive or wallet not eligible)' };

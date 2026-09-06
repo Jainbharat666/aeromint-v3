@@ -1283,11 +1283,13 @@ function App() {
   // ☁️ US Cloud Autonomous Mint Scheduler (Ashburn, VA - 0ms Ping to Robinhood / OpenSea)
   const [cloudJobId, setCloudJobId] = useState(null);
   const cloudJobIdRef = useRef(null);
+  const cloudJobTargetEpochMsRef = useRef(null);
   const [cloudJobStatus, setCloudJobStatus] = useState(null);
   const lastCloudLogIndexRef = useRef(0);
 
   const armCloudMintJob = async (targetEpochMs, overrideStage = null, overridePrice = null) => {
     try {
+      cloudJobTargetEpochMsRef.current = Number(targetEpochMs);
       const currentWallets = walletsRef.current && walletsRef.current.length > 0 ? walletsRef.current : wallets;
       const currentMasterAddr = masterWalletAddressRef.current || masterWalletAddress;
       const workerWallets = currentWallets.filter(w => 
@@ -1296,17 +1298,18 @@ function App() {
       );
 
       if (workerWallets.length === 0) {
-        log(`⚠️ [US CLOUD SCHEDULER] No worker wallets selected! Please select at least 1 wallet to arm.`, 'warning');
-        return null;
+        throw new Error('No worker wallets selected for US Cloud execution');
       }
 
-      const activeContract = detectedContracts[selectedContractIndex];
       const stageToUse = overrideStage || seaDropStage || selectedTargetStage?.type || 'public';
-      const priceToUse = overridePrice || pricePerNft || '0.0';
+      const priceToUse = overridePrice !== null ? overridePrice : pricePerNft;
 
       // Collect user's candidate RPC endpoints (including custom user nodes and fleet nodes)
-      const activeEndpoints = rpcEndpoints.filter(r => r.latency !== 'Offline' && (r.network === selectedNetworkKey || !r.network));
-      const sorted = [...activeEndpoints].sort((a, b) => (parseInt(a.latency) || 999) - (parseInt(b.latency) || 999));
+      const activeEndpoints = clientRpcCandidatesRef.current?.length > 0
+        ? clientRpcCandidatesRef.current
+        : [robinhoodRpcInput || 'https://rpc.mainnet.chain.robinhood.com'];
+        
+      const sorted = [...activeEndpoints].sort((a, b) => (a.latency || 999) - (b.latency || 999));
       const targetRpcs = sorted.length > 0 ? sorted : activeEndpoints;
 
       const payload = {
@@ -1334,6 +1337,7 @@ function App() {
 
       const headers = {
         'Content-Type': 'application/json',
+        'x-session-token': userSessionToken || '',
         ...(currentUser?.email ? { 'x-user-email': currentUser.email } : { 'x-user-email': 'jainbharat666@gmail.com' }),
         ...(currentUser?.id ? { 'x-user-id': currentUser.id } : { 'x-user-id': 'owner_master_001' }),
         ...(currentUser?.session_token ? { 'Authorization': `Bearer ${currentUser.session_token}` } : {})
@@ -1350,6 +1354,7 @@ function App() {
       if (data && data.success && data.jobId) {
         setCloudJobId(data.jobId);
         cloudJobIdRef.current = data.jobId;
+        cloudJobTargetEpochMsRef.current = Number(targetEpochMs);
         setCloudJobStatus('ARMED');
         lastCloudLogIndexRef.current = 0;
         log(`☁️ [US CLOUD ENGINE ARMED] Job #${data.jobId.slice(0, 14)} active on Ashburn VPS! Target: ${new Date(targetEpochMs).toLocaleTimeString()} (<1ms to Sequencer)`, 'success');
@@ -1380,23 +1385,26 @@ function App() {
           headers,
           body: JSON.stringify({ jobId: activeId })
         });
-        log(`🛑 [US CLOUD SCHEDULER] Job #${activeId.slice(0, 14)} cancelled on US Cloud VPS. Private keys purged from RAM.`, 'info');
+        log(`🛑 [US CLOUD SCHEDULER] Job #${activeId.slice(0, 14)} successfully cancelled on VPS.`, 'warning');
       } catch (err) {
-        console.warn('[Cancel Cloud Job Error]:', err.message);
+        console.warn('Failed to cancel cloud mint job:', err.message);
       }
     }
     setCloudJobId(null);
     cloudJobIdRef.current = null;
+    cloudJobTargetEpochMsRef.current = null;
     setCloudJobStatus(null);
     lastCloudLogIndexRef.current = 0;
   };
 
-  // Live log polling for US Cloud Scheduler
+  // Live log polling for US Cloud Scheduler (Adaptive 150ms micro-polling at T-0 for instant sub-second UI updates)
   useEffect(() => {
     if (!cloudJobId || !isScheduled) return;
 
     let isPolling = true;
-    const pollInterval = setInterval(async () => {
+    let pollTimeoutId = null;
+
+    const pollLoop = async () => {
       if (!isPolling) return;
       try {
         const endpoint = `${BACKEND_BASE || ''}/api/cloud-mint/status?jobId=${encodeURIComponent(cloudJobId)}`;
@@ -1422,32 +1430,45 @@ function App() {
             setIsScheduled(false);
             setCloudJobId(null);
             cloudJobIdRef.current = null;
+            cloudJobTargetEpochMsRef.current = null;
             setCountdown('🎯 BLAST CONFIRMED');
             try { triggerCelebration(); } catch (e) {}
             try { playSound('success'); } catch (e) {}
-            clearInterval(pollInterval);
+            return;
           } else if (job?.status === 'FAILED') {
             const errDetail = job?.results?.error || (Array.isArray(data.logs) && data.logs.length > 0 ? (data.logs[data.logs.length - 1]?.msg || data.logs[data.logs.length - 1]) : 'Execution failure');
             log(`❌ [US CLOUD MINT ERROR] VPS returned failure: ${errDetail}`, 'error');
             setIsScheduled(false);
             setCloudJobId(null);
             cloudJobIdRef.current = null;
-            clearInterval(pollInterval);
+            cloudJobTargetEpochMsRef.current = null;
+            return;
           } else if (job?.status === 'CANCELLED') {
             setIsScheduled(false);
             setCloudJobId(null);
             cloudJobIdRef.current = null;
-            clearInterval(pollInterval);
+            cloudJobTargetEpochMsRef.current = null;
+            return;
           }
         }
       } catch (e) {
         // Intermittent network hiccup during polling
       }
-    }, 1000);
+
+      if (isPolling) {
+        const targetMs = cloudJobTargetEpochMsRef.current;
+        const diff = targetMs ? targetMs - getNtpNow() : 10000;
+        // Adaptive 150ms high-frequency polling from T-4s to T+10s so UI updates with 0 lag!
+        const delay = (diff < 4000 && diff > -10000) ? 150 : 800;
+        pollTimeoutId = setTimeout(pollLoop, delay);
+      }
+    };
+
+    pollLoop();
 
     return () => {
       isPolling = false;
-      clearInterval(pollInterval);
+      if (pollTimeoutId) clearTimeout(pollTimeoutId);
     };
   }, [cloudJobId, isScheduled]);
 
