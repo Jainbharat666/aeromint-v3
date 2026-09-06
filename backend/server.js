@@ -2849,8 +2849,8 @@ setInterval(async () => {
       job.prefetchedT12 = true;
       (async () => {
         try {
-          if (job.slug && (job.stage === 'allowlist')) {
-            addCloudLog(jobId, 'T-12s: Querying OpenSea 1-Shot GraphQL for presale signatures...', 'warning');
+          if (job.slug) {
+            addCloudLog(jobId, `T-12s: Querying OpenSea 1-Shot GraphQL for stage "${job.stage}" signatures...`, 'warning');
             const resultMap = await fetchOpenSeaBatchCalldata(job);
             if (resultMap && resultMap.size > 0) {
               for (const [addr, sub] of resultMap.entries()) {
@@ -2944,7 +2944,8 @@ setInterval(async () => {
           const isPublic = job.stage === 'public';
           const hasAllSignatures = job.wallets.every(w => job.signedCalldataMap.has(w.address.toLowerCase()));
 
-          if (isPublic || hasAllSignatures) {
+          // Only pre-sign in RAM at T-5s if we already secured OpenSea signatures OR if there is NO OpenSea slug (direct onchain drop)
+          if (hasAllSignatures || (!job.slug && isPublic)) {
             const preSigned = [];
             const gasLimit = 150000n + (BigInt(job.quantity || 1) * 15000n);
             const SEADROP_MINT_PUBLIC_IFACE = new ethers.Interface([

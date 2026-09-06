@@ -6328,34 +6328,30 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
             const targetMinter = customMinterInput.trim() || "0x0000000000000000000000000000000000000000";
 
             const isAllowlistExec = seaDropStage === 'allowlist' || selectedTargetStage?.type === 'allowlist';
-            if (isAllowlistExec) {
-              const slug = collectionPreview?.slug;
-              const cacheKey = slug ? `${slug.toLowerCase().trim()}_${w.address.toLowerCase().trim()}_${Number(quantity) || 1}` : '';
-              let signedData = cacheKey ? signedMintCacheRef.current.get(cacheKey) : null;
+            const slug = collectionPreview?.slug;
+            const cacheKey = slug ? `${slug.toLowerCase().trim()}_${w.address.toLowerCase().trim()}_${Number(quantity) || 1}` : '';
+            let signedData = cacheKey ? signedMintCacheRef.current.get(cacheKey) : null;
 
-              if (!signedData && slug) {
-                signedData = cacheKey ? signedMintCacheRef.current.get(cacheKey) : null;
-              }
-              if (!signedData && slug) {
-                try {
-                  const batchMap = await fetchOpenSeaBatchMintData(slug, [w], quantity);
-                  signedData = batchMap?.get(w.address.toLowerCase().trim());
-                } catch (e) {}
-              }
-              if (!signedData && slug && selectedNetworkKey !== 'robinhood') {
-                try {
-                  signedData = await fetchOpenSeaSignedMintData(slug, w.address, quantity);
-                } catch (e) {}
-              }
+            if (!signedData && slug) {
+              try {
+                const batchMap = await fetchOpenSeaBatchMintData(slug, [w], quantity);
+                signedData = batchMap?.get(w.address.toLowerCase().trim());
+              } catch (e) {}
+            }
+            if (!signedData && slug && selectedNetworkKey !== 'robinhood') {
+              try {
+                signedData = await fetchOpenSeaSignedMintData(slug, w.address, quantity);
+              } catch (e) {}
+            }
 
-              if (signedData && signedData.data) {
-                log(`🟡 ${w.name || 'Wallet #' + w.index}: Using OpenSea Verified Signed Allowlist Mint Calldata [mintSigned]`, 'warning');
-                txData = signedData.data;
-                txTarget = signedData.to || seadropTarget;
-                if (signedData.value !== undefined) {
-                  walletValue = signedData.value;
-                }
-              } else if (seaDropAllowListProof && seaDropAllowListProof.length > 0) {
+            if (signedData && signedData.data) {
+              log(`🟡 ${w.name || 'Wallet #' + w.index}: Using OpenSea Verified Signed Mint Calldata [mintSigned]`, 'warning');
+              txData = signedData.data;
+              txTarget = signedData.to || seadropTarget;
+              if (signedData.value !== undefined) {
+                walletValue = signedData.value;
+              }
+            } else if (isAllowlistExec) {
                 // Only use on-chain mintAllowList if user provided an explicit Merkle proof!
                 const activeAllowlistStage = selectedTargetStage?.type === 'allowlist' 
                   ? selectedTargetStage 
