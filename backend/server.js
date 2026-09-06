@@ -2475,8 +2475,7 @@ app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
       seaDropAddress: seaDropAddress || '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5',
       stage: stage || 'public',
       quantity: Number(quantity) || 1,
-      pricePerNft: String(pricePerNft || '0.0'),
-      gasSpeed: gasSpeed || 'hyped',
+      gasSpeed: (gasSpeed || 'turbo').toLowerCase(),
       customMaxFee,
       customPriorityFee,
       targetEpochMs: Number(targetEpochMs),
@@ -2504,7 +2503,7 @@ app.post('/api/cloud-mint/schedule', adminAuthMiddleware, async (req, res) => {
     };
 
     cloudScheduledJobs.set(jobId, job);
-    addCloudLog(jobId, `Job ARMED on US Cloud VPS! Target: ${new Date(job.targetEpochMs).toISOString()} | Wallets: ${job.wallets.length} | Multi-Blast: Top ${effectiveBlastCount} Nodes Active (${candidateRpcs.length} candidate nodes pooled)`, 'success');
+    addCloudLog(jobId, `Job ARMED on US Cloud VPS! Target: ${new Date(job.targetEpochMs).toISOString()} | Wallets: ${job.wallets.length} | Gas Mode: ${job.gasSpeed.toUpperCase()} | Multi-Blast: Top ${effectiveBlastCount} Nodes Active (${candidateRpcs.length} candidate nodes pooled)`, 'success');
 
     return res.json({
       success: true,
@@ -2805,22 +2804,39 @@ setInterval(async () => {
       job.status = 'PRESIGN_T5';
       (async () => {
         try {
-          addCloudLog(jobId, 'T-5s: Pre-fetching Dynamic Gas and Nonces in RAM...', 'info');
           const primaryRpc = job.activeBlastRpcs?.[0] || 'https://rpc.mainnet.chain.robinhood.com';
           const provider = new ethers.JsonRpcProvider(primaryRpc);
           const feeData = await provider.getFeeData().catch(() => null);
           const baseGas = feeData?.maxFeePerGas || feeData?.gasPrice || 100000000n;
           
-          let maxFee = (baseGas * 250n) / 100n + ethers.parseUnits('0.50', 'gwei');
-          let maxPriority = ethers.parseUnits('0.50', 'gwei');
+          const speed = (job.gasSpeed || 'turbo').toLowerCase();
+          let maxFee;
+          let maxPriority;
 
-          if (job.gasSpeed === 'surge') {
-            maxFee = (baseGas * 160n) / 100n + ethers.parseUnits('0.05', 'gwei');
-            maxPriority = ethers.parseUnits('0.05', 'gwei');
+          if (speed === 'safe') {
+            // Safe: 1.15x Base Fee + 0.005 Gwei priority tip (Minimal cost, perfect for uncompetitive mints)
+            maxFee = (baseGas * 115n) / 100n + ethers.parseUnits('0.005', 'gwei');
+            maxPriority = ethers.parseUnits('0.005', 'gwei');
+          } else if (speed === 'fast' || speed === 'turbo') {
+            // Turbo: 1.35x Base Fee + 0.02 Gwei priority tip (Standard fast mint without overpaying)
+            maxFee = (baseGas * 135n) / 100n + ethers.parseUnits('0.02', 'gwei');
+            maxPriority = ethers.parseUnits('0.02', 'gwei');
+          } else if (speed === 'surge') {
+            // Surge: 1.65x Base Fee + 0.08 Gwei priority tip (Traffic spike buffer)
+            maxFee = (baseGas * 165n) / 100n + ethers.parseUnits('0.08', 'gwei');
+            maxPriority = ethers.parseUnits('0.08', 'gwei');
+          } else if (speed === 'custom' && job.customMaxFee) {
+            maxFee = ethers.parseUnits(String(job.customMaxFee), 'gwei');
+            maxPriority = job.customPriorityFee ? ethers.parseUnits(String(job.customPriorityFee), 'gwei') : ethers.parseUnits('0.02', 'gwei');
+          } else {
+            // Hyped: 2.20x Base Fee + 0.25 Gwei priority tip (Heavy gas war sniper)
+            maxFee = (baseGas * 220n) / 100n + ethers.parseUnits('0.25', 'gwei');
+            maxPriority = ethers.parseUnits('0.25', 'gwei');
           }
 
           job.computedMaxFee = maxFee;
           job.computedMaxPriority = maxPriority;
+          addCloudLog(jobId, `T-5s: Pre-fetching Dynamic Gas [${speed.toUpperCase()}: maxFee=${ethers.formatUnits(maxFee, 'gwei')} Gwei | tip=${ethers.formatUnits(maxPriority, 'gwei')} Gwei] and Nonces in RAM...`, 'info');
 
           // Pre-fetch nonces
           await Promise.all(job.wallets.map(async (w) => {
@@ -2836,6 +2852,7 @@ setInterval(async () => {
 
           if (isPublic || hasAllSignatures) {
             const preSigned = [];
+            const gasLimit = 150000n + (BigInt(job.quantity || 1) * 15000n);
             for (const w of job.wallets) {
               const sub = job.signedCalldataMap.get(w.address.toLowerCase());
               const toAddr = sub?.to || job.seaDropAddress;
@@ -2847,7 +2864,7 @@ setInterval(async () => {
               let walletMaxPriority = maxPriority;
               if (w.balance && w.balance > val) {
                 const availForGas = w.balance - val;
-                const maxAffordableFee = availForGas / 220000n;
+                const maxAffordableFee = availForGas / gasLimit;
                 if (maxAffordableFee < walletMaxFee && maxAffordableFee > (baseGas * 105n / 100n)) {
                   walletMaxFee = maxAffordableFee;
                   walletMaxPriority = walletMaxFee > baseGas ? (walletMaxFee - baseGas) / 2n : 10000000n;
@@ -2859,7 +2876,7 @@ setInterval(async () => {
                 data: txData,
                 value: val,
                 nonce: w.nonce,
-                gasLimit: 220000n,
+                gasLimit,
                 maxFeePerGas: walletMaxFee,
                 maxPriorityFeePerGas: walletMaxPriority,
                 chainId: 4663,
@@ -2957,11 +2974,12 @@ setInterval(async () => {
                 : (job.pricePerNft && job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
 
               // Zero-Revert Balance Protection: Clamp maxFee if wallet balance cannot support hyped priority fee
+              const gasLimit = 150000n + (BigInt(job.quantity || 1) * 15000n);
               let walletMaxFee = job.computedMaxFee || ethers.parseUnits('1.0', 'gwei');
-              let walletMaxPriority = job.computedMaxPriority || ethers.parseUnits('0.5', 'gwei');
+              let walletMaxPriority = job.computedMaxPriority || ethers.parseUnits('0.02', 'gwei');
               if (w.balance && w.balance > val) {
                 const availForGas = w.balance - val;
-                const maxAffordableFee = availForGas / 220000n;
+                const maxAffordableFee = availForGas / gasLimit;
                 const baseGasFloor = 100000000n; // 0.1 gwei base
                 if (maxAffordableFee < walletMaxFee && maxAffordableFee > (baseGasFloor * 105n / 100n)) {
                   walletMaxFee = maxAffordableFee;
@@ -2974,7 +2992,7 @@ setInterval(async () => {
                 data: txData,
                 value: val,
                 nonce: w.nonce || 0,
-                gasLimit: 220000n,
+                gasLimit,
                 maxFeePerGas: walletMaxFee,
                 maxPriorityFeePerGas: walletMaxPriority,
                 chainId: 4663,

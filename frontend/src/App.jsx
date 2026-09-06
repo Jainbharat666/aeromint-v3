@@ -1320,7 +1320,9 @@ function App() {
         stage: stageToUse,
         pricePerNft: String(priceToUse),
         quantity: Number(quantity) || 1,
-        gasSpeed: gasSpeed || 'hyped',
+        gasSpeed: gasSpeed || 'fast',
+        customMaxFee: customMaxFee || null,
+        customPriorityFee: customMaxPriority || null,
         blastNodeCount: Number(blastNodeCount) || 3,
         rpcMode: rpcMode || 'blast',
         rpcUrls: targetRpcs.map(r => ({ name: r.name, url: r.url })),
@@ -1333,7 +1335,7 @@ function App() {
         }))
       };
 
-      log(`☁️ [US CLOUD SCHEDULER] Arming job on US Cloud VPS with Top ${Number(blastNodeCount) || 3} Multi-Blast Model (${targetRpcs.length} candidate RPCs pooled)...`, 'info');
+      log(`☁️ [US CLOUD SCHEDULER] Arming job on US Cloud VPS with Top ${Number(blastNodeCount) || 3} Multi-Blast Model (${targetRpcs.length} candidate RPCs pooled | Gas: ${(gasSpeed || 'fast').toUpperCase()})...`, 'info');
 
       const headers = {
         'Content-Type': 'application/json',
