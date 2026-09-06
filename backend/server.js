@@ -5,9 +5,26 @@ const cors = require('cors');
 const axios = require('axios');
 const https = require('https');
 const net = require('net');
+const dns = require('dns').promises;
 
-// Microsecond Network TCP Ping Helper (Measures raw physical transit time from US Server)
-function measureTcpPing(host, port = 443, timeout = 2500) {
+// Local DNS cache to eliminate 30-45ms cold OS lookup overhead during TCP benchmarking
+const dnsCache = new Map();
+
+async function resolveHostIp(host) {
+  if (!host) return host;
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return host;
+  const cached = dnsCache.get(host);
+  if (cached && Date.now() - cached.ts < 300000) return cached.ip;
+  try {
+    const { address } = await dns.lookup(host);
+    dnsCache.set(host, { ip: address, ts: Date.now() });
+    return address;
+  } catch (e) {
+    return host;
+  }
+}
+
+function pingSocketOnce(target, port = 443, timeout = 2500) {
   return new Promise((resolve) => {
     const t0 = performance.now();
     const socket = new net.Socket();
@@ -30,8 +47,22 @@ function measureTcpPing(host, port = 443, timeout = 2500) {
     };
     socket.on('timeout', onError);
     socket.on('error', onError);
-    socket.connect(port, host);
+    socket.connect(port, target);
   });
+}
+
+// Microsecond Network TCP Ping Helper (Measures raw physical transit time from US Server)
+async function measureTcpPing(host, port = 443, timeout = 2500) {
+  try {
+    const ip = await resolveHostIp(host);
+    const p1 = await pingSocketOnce(ip, port, timeout);
+    const p2 = await pingSocketOnce(ip, port, timeout);
+    if (p1 === null) return p2;
+    if (p2 === null) return p1;
+    return Math.min(p1, p2);
+  } catch (e) {
+    return null;
+  }
 }
 
 // Persistent Keep-Alive HTTPS Agent for OpenSea (Eliminates 20-40ms TLS handshake per call)
