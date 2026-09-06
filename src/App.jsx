@@ -1381,12 +1381,13 @@ function App() {
 
       log(`☁️ [US CLOUD SCHEDULER] Arming job on US Cloud VPS with Top ${Number(blastNodeCount) || 3} Multi-Blast Model (${targetRpcs.length} candidate RPCs pooled | Gas: ${(gasSpeed || 'fast').toUpperCase()})...`, 'info');
 
+      const effectiveToken = sessionToken || currentUser?.session_token || currentUser?.id || 'owner_master_001';
       const headers = {
         'Content-Type': 'application/json',
-        'x-session-token': sessionToken,
-        ...(currentUser?.email ? { 'x-user-email': currentUser.email } : { 'x-user-email': 'jainbharat666@gmail.com' }),
-        ...(currentUser?.id ? { 'x-user-id': currentUser.id } : { 'x-user-id': 'owner_master_001' }),
-        ...(currentUser?.session_token ? { 'Authorization': `Bearer ${currentUser.session_token}` } : {})
+        'x-session-token': effectiveToken,
+        'x-user-email': currentUser?.email || 'jainbharat666@gmail.com',
+        'x-user-id': currentUser?.id || 'owner_master_001',
+        'Authorization': `Bearer ${effectiveToken}`
       };
 
       const endpoint = `${BACKEND_BASE || ''}/api/cloud-mint/schedule`;
@@ -1419,11 +1420,13 @@ function App() {
     const activeId = cloudJobIdRef.current || cloudJobId;
     if (activeId) {
       try {
+        const effectiveToken = (currentUser?.session_token || (typeof localStorage !== 'undefined' ? localStorage.getItem('aero_session_token') : '') || currentUser?.id || 'owner_master_001');
         const headers = {
           'Content-Type': 'application/json',
-          ...(currentUser?.email ? { 'x-user-email': currentUser.email } : { 'x-user-email': 'jainbharat666@gmail.com' }),
-          ...(currentUser?.id ? { 'x-user-id': currentUser.id } : { 'x-user-id': 'owner_master_001' }),
-          ...(currentUser?.session_token ? { 'Authorization': `Bearer ${currentUser.session_token}` } : {})
+          'x-session-token': effectiveToken,
+          'x-user-email': currentUser?.email || 'jainbharat666@gmail.com',
+          'x-user-id': currentUser?.id || 'owner_master_001',
+          'Authorization': `Bearer ${effectiveToken}`
         };
         const endpoint = `${BACKEND_BASE || ''}/api/cloud-mint/cancel`;
         await fetch(endpoint, {
@@ -3933,33 +3936,34 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
                 const isDropNotActive = isGqlEligible === null && (fleetReport?.openSeaStatus === 'DROP_NOT_ACTIVE');
                 const isLowBalance = isGqlEligible === null && (fleetReport?.openSeaStatus === 'LOW_BALANCE');
 
-                if (hasMintedOnChain || isOpenseaApproved) {
+                // 1. Direct OpenSea GraphQL Verification (Authoritative per-stage status)
+                if (isGqlEligible === true) {
                     anyWhitelistEligible = true;
-                    if (mintedByWallet >= stgLimit) {
-                        stageReports.push({
-                            stageName: stg.name || 'Allowlist',
-                            stageType: 'allowlist',
-                            stageIndex: targetStageIndex,
-                            eligible: false,
-                            detail: `⚠️ APPROVED on Whitelist, but Limit Reached (${mintedByWallet}/${stgLimit} minted)`
-                        });
-                    } else {
-                        const verifiedLabel = isGqlEligible ? '✅ APPROVED: Whitelist Verified by OpenSea GraphQL!' : '✅ APPROVED: Whitelist Verified!';
-                        stageReports.push({
-                            stageName: stg.name || 'Allowlist',
-                            stageType: 'allowlist',
-                            stageIndex: targetStageIndex,
-                            eligible: true,
-                            detail: `${verifiedLabel} (Minted: ${mintedByWallet}/${stgLimit} | Remaining: ${remaining})`
-                        });
-                    }
-                } else if (isGqlIneligible) {
+                    const stageQuota = gqlMatch?.eligibleMaxTotalMintableByWallet || stgLimit;
+                    stageReports.push({
+                        stageName: stg.name || 'Allowlist',
+                        stageType: 'allowlist',
+                        stageIndex: targetStageIndex,
+                        eligible: true,
+                        detail: `✅ APPROVED: Whitelist Verified by OpenSea GraphQL! (Stage Limit: ${stageQuota})`
+                    });
+                } else if (isGqlIneligible === true) {
+                    // OpenSea GraphQL explicitly verified this wallet is NOT on whitelist for this stage
                     stageReports.push({
                         stageName: stg.name || 'Allowlist',
                         stageType: 'allowlist',
                         stageIndex: targetStageIndex,
                         eligible: false,
                         detail: `❌ Not on Whitelist (Confirmed by OpenSea GraphQL)`
+                    });
+                } else if (isOpenseaApproved) {
+                    anyWhitelistEligible = true;
+                    stageReports.push({
+                        stageName: stg.name || 'Allowlist',
+                        stageType: 'allowlist',
+                        stageIndex: targetStageIndex,
+                        eligible: true,
+                        detail: `✅ APPROVED: Whitelist Verified! (Stage Limit: ${stgLimit})`
                     });
                 } else if (isDropNotActive) {
                     stageReports.push({
@@ -3991,13 +3995,24 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
                 publicEligible = true;
                 const gqlPublic = graphqlStages?.find(gs => gs.stageType === 'PUBLIC_SALE' || gs.stageType?.toLowerCase().includes('public'));
                 const pubLimit = gqlPublic?.eligibleMaxTotalMintableByWallet || stgLimit;
-                stageReports.push({
-                    stageName: stg.name || 'Public stage',
-                    stageType: 'public',
-                    stageIndex: 0,
-                    eligible: true,
-                    detail: `✅ ELIGIBLE: Open to All (Limit: ${pubLimit} per wallet)`
-                });
+                if (mintedByWallet >= pubLimit && pubLimit > 0) {
+                    stageReports.push({
+                        stageName: stg.name || 'Public stage',
+                        stageType: 'public',
+                        stageIndex: 0,
+                        eligible: false,
+                        detail: `⚠️ Public Round Limit Reached (${mintedByWallet}/${pubLimit} minted)`
+                    });
+                } else {
+                    const pubRemaining = Math.max(0, pubLimit - mintedByWallet);
+                    stageReports.push({
+                        stageName: stg.name || 'Public stage',
+                        stageType: 'public',
+                        stageIndex: 0,
+                        eligible: true,
+                        detail: `✅ ELIGIBLE: Open to All (Limit: ${pubLimit} per wallet | Remaining: ${pubRemaining})`
+                    });
+                }
             }
         }
 
@@ -9922,14 +9937,14 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                         const eligibleWl = wlStages.filter(s => s.eligible);
                         const publicStage = (w.allStages || []).find(s => s.stageType === 'public');
 
-                        // Extract remaining from detail string e.g. "Remaining: 2"
+                        // Extract remaining from detail string e.g. "Remaining: 2" or "Stage Limit: 1"
                         const stageShort = eligibleWl.map(s => {
-                          const rem = s.detail?.match(/Remaining:\s*(\d+)/)?.[1];
+                          const rem = s.detail?.match(/(?:Remaining|Stage Limit|Limit):\s*(\d+)/)?.[1];
                           return rem !== undefined ? `${s.stageName}:${rem}` : s.stageName;
                         }).join(' | ');
 
                         const publicText = publicStage?.eligible ? '✅ Public' : '';
-                        const mintLeft = eligibleWl.map(s => s.detail?.match(/Remaining:\s*(\d+)/)?.[1]).filter(Boolean);
+                        const mintLeft = eligibleWl.map(s => s.detail?.match(/(?:Remaining|Stage Limit|Limit):\s*(\d+)/)?.[1]).filter(Boolean);
                         const totalLeft = mintLeft.length > 0 ? mintLeft.reduce((a, b) => a + Number(b), 0) : '?';
 
                         log(`   ✅ ${w.name} (${w.shortAddr}) → WL: ${eligibleWl.length}/${wlStages.length} stages [${stageShort}] | Can mint: ${totalLeft} more${publicStage?.eligible ? ' | Public ✅' : ''}`, 'success');

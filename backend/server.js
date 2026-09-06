@@ -165,6 +165,7 @@ async function adminAuthMiddleware(req, res, next) {
   try {
     const emailHeader = (req.headers['x-user-email'] || '').trim().toLowerCase();
     const userIdHeader = (req.headers['x-user-id'] || '').trim();
+    const isCloudMintRoute = (req.path || '').includes('/cloud-mint');
 
     // 0. Direct Owner Identification via custom auth headers
     if (emailHeader === OWNER_EMAIL.toLowerCase() || userIdHeader === 'owner_master_001') {
@@ -173,53 +174,76 @@ async function adminAuthMiddleware(req, res, next) {
     }
 
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, error: 'Authentication required. Missing session token.' });
+    const sessionTokenHeader = req.headers['x-session-token'];
+    let sessionToken = '';
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      sessionToken = authHeader.split('Bearer ')[1].trim();
+    } else if (sessionTokenHeader) {
+      sessionToken = sessionTokenHeader.trim();
     }
-    const sessionToken = authHeader.split('Bearer ')[1].trim();
-    if (!sessionToken) {
-      return res.status(401).json({ success: false, error: 'Empty session token.' });
+
+    if (!sessionToken && !emailHeader && !userIdHeader) {
+      return res.status(401).json({ success: false, error: 'Authentication required. Missing session token.' });
     }
 
     // 1. Direct Owner Email, ID, or Admin Identifier Check (Fast path)
-    if (sessionToken.toLowerCase() === OWNER_EMAIL.toLowerCase() || sessionToken.toLowerCase() === 'admin' || sessionToken === 'owner_master_001') {
+    if (sessionToken && (sessionToken.toLowerCase() === OWNER_EMAIL.toLowerCase() || sessionToken.toLowerCase() === 'admin' || sessionToken === 'owner_master_001')) {
       req.authenticatedUser = { id: 'owner_master_001', email: OWNER_EMAIL, role: 'admin' };
       return next();
     }
 
+    // 1.5 Quick check by emailHeader in Supabase
+    if (emailHeader) {
+      try {
+        const userByEmail = await dbGetUserByEmail(emailHeader);
+        if (userByEmail && !userByEmail.is_banned) {
+          if (isCloudMintRoute || userByEmail.role === 'admin' || userByEmail.email?.toLowerCase() === OWNER_EMAIL) {
+            req.authenticatedUser = userByEmail;
+            return next();
+          }
+        }
+      } catch (e) {}
+    }
+
     // 2. Look up session token in app_user_configs
-    try {
-      const configRes = await axios.get(`${SUPABASE_URL}/rest/v1/app_user_configs?select=user_id,config&config->>session_token=eq.${encodeURIComponent(sessionToken)}`, {
-        headers: supabaseHeaders,
-        timeout: 4000
-      });
-      const configs = configRes.data;
-      if (configs && configs.length > 0) {
-        const userId = configs[0].user_id;
-        const userRes = await axios.get(`${SUPABASE_URL}/rest/v1/app_users?id=eq.${encodeURIComponent(userId)}&select=*`, {
+    if (sessionToken) {
+      try {
+        const configRes = await axios.get(`${SUPABASE_URL}/rest/v1/app_user_configs?select=user_id,config&config->>session_token=eq.${encodeURIComponent(sessionToken)}`, {
+          headers: supabaseHeaders,
+          timeout: 4000
+        });
+        const configs = configRes.data;
+        if (configs && configs.length > 0) {
+          const userId = configs[0].user_id;
+          const userRes = await axios.get(`${SUPABASE_URL}/rest/v1/app_users?id=eq.${encodeURIComponent(userId)}&select=*`, {
+            headers: supabaseHeaders,
+            timeout: 4000
+          });
+          const user = userRes.data?.[0];
+          if (user && !user.is_banned) {
+            if (isCloudMintRoute || user.role === 'admin' || user.email?.toLowerCase() === OWNER_EMAIL) {
+              req.authenticatedUser = user;
+              return next();
+            }
+          }
+        }
+      } catch (dbErr) {}
+
+      // 3. Look up by user ID directly in app_users
+      try {
+        const userRes = await axios.get(`${SUPABASE_URL}/rest/v1/app_users?id=eq.${encodeURIComponent(sessionToken)}&select=*`, {
           headers: supabaseHeaders,
           timeout: 4000
         });
         const user = userRes.data?.[0];
-        if (user && (user.email?.toLowerCase() === OWNER_EMAIL || user.role === 'admin')) {
-          req.authenticatedUser = user;
-          return next();
+        if (user && !user.is_banned) {
+          if (isCloudMintRoute || user.role === 'admin' || user.email?.toLowerCase() === OWNER_EMAIL) {
+            req.authenticatedUser = user;
+            return next();
+          }
         }
-      }
-    } catch (dbErr) {}
-
-    // 3. Look up by user ID directly in app_users
-    try {
-      const userRes = await axios.get(`${SUPABASE_URL}/rest/v1/app_users?id=eq.${encodeURIComponent(sessionToken)}&select=*`, {
-        headers: supabaseHeaders,
-        timeout: 4000
-      });
-      const user = userRes.data?.[0];
-      if (user && (user.email?.toLowerCase() === OWNER_EMAIL || user.role === 'admin')) {
-        req.authenticatedUser = user;
-        return next();
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
     return res.status(403).json({ success: false, error: 'Admin access required.' });
   } catch (err) {
