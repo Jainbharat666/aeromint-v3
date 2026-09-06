@@ -3975,6 +3975,13 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
             }
         }
 
+        eligibilityStatsCacheRef.current.set(addr, {
+            minted: mintedByWallet,
+            stageReports,
+            anyWhitelistEligible,
+            publicEligible
+        });
+
         return {
             address: addr,
             mintedByWallet,
@@ -5607,7 +5614,12 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
           }
         }
 
-        const isAllowlistApproved = !isAllowlistStage || (signedData && signedData.data) || isStageUpcoming;
+        const cachedAudit = eligibilityStatsCacheRef.current?.get(w.address.toLowerCase());
+        const isEligibleFromAudit = typeof cachedAudit === 'object'
+          ? (cachedAudit.anyWhitelistEligible === true || cachedAudit.stageReports?.some(s => s.eligible && (s.stageType === 'allowlist' || s.stageName === activeStage?.name)))
+          : false;
+
+        const isAllowlistApproved = !isAllowlistStage || (signedData && signedData.data) || isStageUpcoming || isEligibleFromAudit;
         const isLimitExhausted = isAllowlistStage && maxPerWalletLimit > 0 && mintedNum >= maxPerWalletLimit;
 
         const isFullyValid = isAllowlistApproved && hasSufficientEth && !isLimitExhausted;

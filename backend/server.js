@@ -2358,28 +2358,51 @@ async function cloudExecuteMempoolBlast(rawSignedTxs, targetRpcs = null) {
       id: Math.floor(Math.random() * 1000000)
     };
 
-    const nodeOutcomes = await Promise.allSettled(blastUrls.map(url =>
-      axios.post(url, payload, { timeout: 3500, headers: { 'Content-Type': 'application/json' } })
-    ));
+    // ⚡ FIRST-ACCEPTED-WINS ULTRA-LOW LATENCY BLAST:
+    // Dispatches simultaneously to all nodes. Unblocks as soon as the fastest node confirms acceptance!
+    return new Promise((resolve) => {
+      let settledCount = 0;
+      let acceptedCount = 0;
+      let lastError = null;
+      let isResolved = false;
 
-    let acceptedCount = 0;
-    let lastError = null;
-    nodeOutcomes.forEach(o => {
-      if (o.status === 'fulfilled') {
-        if (o.value?.data?.result) acceptedCount++;
-        else if (o.value?.data?.error) lastError = o.value.data.error.message;
-      } else {
-        lastError = o.reason?.message;
-      }
+      blastUrls.forEach(url => {
+        axios.post(url, payload, { timeout: 3500, headers: { 'Content-Type': 'application/json' } })
+          .then(res => {
+            if (res.data?.result) {
+              acceptedCount++;
+              if (!isResolved) {
+                isResolved = true;
+                resolve({
+                  txHash,
+                  success: true,
+                  nodesAccepted: 1,
+                  totalNodes: blastUrls.length,
+                  error: null
+                });
+              }
+            } else if (res.data?.error) {
+              lastError = res.data.error.message;
+            }
+          })
+          .catch(err => {
+            lastError = err.message;
+          })
+          .finally(() => {
+            settledCount++;
+            if (settledCount === blastUrls.length && !isResolved) {
+              isResolved = true;
+              resolve({
+                txHash,
+                success: acceptedCount > 0,
+                nodesAccepted: acceptedCount,
+                totalNodes: blastUrls.length,
+                error: acceptedCount === 0 ? lastError : null
+              });
+            }
+          });
+      });
     });
-
-    return {
-      txHash,
-      success: acceptedCount > 0,
-      nodesAccepted: acceptedCount,
-      totalNodes: blastUrls.length,
-      error: acceptedCount === 0 ? lastError : null
-    };
   }));
 
   return {
@@ -2919,8 +2942,9 @@ setInterval(async () => {
       })();
     }
 
-    // ⚡ EXACT T-0 (ASHBURN LOCAL LEAD: 28ms to OpenSea / 0ms to RPC)
-    if (diff <= 28 && !job.executedT0) {
+    // ⚡ EXACT T-0 / FLIGHT-TIME LEAD TRIGGER (120ms lead offset so Pulse #1 lands at OpenSea at exact T-0)
+    const triggerThreshold = (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) ? 10 : 120;
+    if (diff <= triggerThreshold && !job.executedT0) {
       job.executedT0 = true;
       job.status = 'EXECUTING_T0';
       (async () => {
