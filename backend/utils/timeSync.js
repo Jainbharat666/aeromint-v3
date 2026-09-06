@@ -16,11 +16,6 @@ const axios = require('axios');
 // NTP-over-HTTP sources (tried in order, first success wins)
 const NTP_SOURCES = [
   {
-    url: 'http://worldtimeapi.org/api/ip',
-    parse: (d) => new Date(d.utc_datetime).getTime(),
-    name: 'WorldTimeAPI'
-  },
-  {
     url: 'https://timeapi.io/api/Time/current/zone?timeZone=UTC',
     parse: (d) => new Date(d.dateTime.endsWith('Z') ? d.dateTime : d.dateTime + 'Z').getTime(),
     name: 'TimeAPI.io'
@@ -29,6 +24,11 @@ const NTP_SOURCES = [
     url: 'https://www.timeapi.io/api/time/current/zone?timeZone=UTC',
     parse: (d) => new Date(d.dateTime.endsWith('Z') ? d.dateTime : d.dateTime + 'Z').getTime(),
     name: 'TimeAPI.io (alt)'
+  },
+  {
+    url: 'http://worldtimeapi.org/api/ip',
+    parse: (d) => new Date(d.utc_datetime).getTime(),
+    name: 'WorldTimeAPI'
   }
 ];
 

@@ -1411,7 +1411,9 @@ function App() {
             const newEntries = data.logs.slice(lastCloudLogIndexRef.current);
             lastCloudLogIndexRef.current = data.logs.length;
             newEntries.forEach(entry => {
-              log(`☁️ [US VPS] ${entry.msg}`, entry.level || 'info');
+              const text = typeof entry === 'string' ? entry : (entry.msg || entry.full || JSON.stringify(entry));
+              const level = typeof entry === 'object' && entry.level ? entry.level : 'info';
+              log(`☁️ [US VPS] ${text}`, level);
             });
           }
 
@@ -1425,7 +1427,8 @@ function App() {
             try { playSound('success'); } catch (e) {}
             clearInterval(pollInterval);
           } else if (job?.status === 'FAILED') {
-            log(`❌ [US CLOUD MINT ERROR] VPS returned failure: ${job?.results?.error || 'Execution failure'}`, 'error');
+            const errDetail = job?.results?.error || (Array.isArray(data.logs) && data.logs.length > 0 ? (data.logs[data.logs.length - 1]?.msg || data.logs[data.logs.length - 1]) : 'Execution failure');
+            log(`❌ [US CLOUD MINT ERROR] VPS returned failure: ${errDetail}`, 'error');
             setIsScheduled(false);
             setCloudJobId(null);
             cloudJobIdRef.current = null;

@@ -70,6 +70,8 @@ function getNextOpenseaKey() {
   return key;
 }
 
+const getNextApiKey = getNextOpenseaKey;
+
 const OPENSEA_API_KEY = OPENSEA_API_KEYS[0] || '';
 
 // Supabase PostgreSQL Cloud Config (Dedicated AeroMint V3 Database)
@@ -2324,12 +2326,18 @@ const cloudJobLogs = new Map();
 function addCloudLog(jobId, message, type = 'info') {
   const timeStr = new Date().toISOString().split('T')[1].replace('Z', '');
   const prefix = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : type === 'success' ? '🎯' : '⚡';
-  const entry = `[${timeStr}] ${prefix} ${message}`;
+  const formattedText = `[${timeStr}] ${prefix} ${message}`;
+  const logObj = {
+    msg: `${prefix} ${message}`,
+    full: formattedText,
+    level: type,
+    timestamp: Date.now()
+  };
   if (!cloudJobLogs.has(jobId)) cloudJobLogs.set(jobId, []);
   const arr = cloudJobLogs.get(jobId);
-  arr.push(entry);
+  arr.push(logObj);
   if (arr.length > 200) arr.shift();
-  console.log(`[CloudScheduler:${jobId}] ${entry}`);
+  console.log(`[CloudScheduler:${jobId}] ${formattedText}`);
 }
 
 const DEFAULT_FALLBACK_RPCS = [
@@ -2562,6 +2570,95 @@ app.get('/api/cloud-mint/status', async (req, res) => {
   return res.json({ success: true, activeJobs: jobsSummary });
 });
 
+// ⚡ High-speed OpenSea GraphQL 1-Shot Batch Fetcher (Ashburn Datacenter Edge)
+async function fetchOpenSeaBatchCalldata(job, apiKeyOverride = null) {
+  try {
+    const contractAddr = job.contractAddress;
+    if (!contractAddr) return new Map();
+    const reqs = job.wallets.map(w => ({ address: w.address, quantity: job.quantity }));
+    const firstAddr = reqs[0]?.address?.toLowerCase();
+    const authCookie = firstAddr ? walletSessionCookies.get(firstAddr) : null;
+    const cookieHeader = authCookie ? `${authCookie}; connected-account-server-hint=${firstAddr}` : `connected-account-server-hint=${firstAddr}`;
+    const apiKeyToUse = apiKeyOverride || getNextOpenseaKey() || '';
+
+    let queryVars = `$fromAssets: [AssetQuantityInput!]!, $recipient: Address`;
+    let queryBody = '';
+    const variables = {
+      fromAssets: [{ asset: { contractAddress: "0x0000000000000000000000000000000000000000", chain: 'robinhood' } }],
+      recipient: firstAddr
+    };
+
+    reqs.forEach((r, idx) => {
+      queryVars += `, $address_${idx}: Address!, $toAssets_${idx}: [AssetQuantityInput!]!`;
+      queryBody += `
+  wallet_${idx}: swap(
+    address: $address_${idx}
+    fromAssets: $fromAssets
+    toAssets: $toAssets_${idx}
+    recipient: $recipient
+    action: MINT
+  ) {
+    actions {
+      __typename
+      ... on TransactionAction {
+        transactionSubmissionData {
+          to
+          data
+          value
+          chain { networkId identifier }
+        }
+      }
+    }
+    errors { __typename }
+  }`;
+      variables[`address_${idx}`] = r.address;
+      variables[`toAssets_${idx}`] = [{ asset: { contractAddress: contractAddr, tokenId: '0', chain: 'robinhood' }, quantity: String(r.quantity || 1) }];
+    });
+
+    const gqlQuery = `query BatchMintActionTimelineQuery(${queryVars}) {\n${queryBody}\n}`;
+    const referer = `https://opensea.io/collection/${job.slug || ''}`;
+
+    const gqlRes = await axios.post('https://gql.opensea.io/graphql', {
+      operationName: 'BatchMintActionTimelineQuery',
+      query: gqlQuery,
+      variables
+    }, {
+      httpsAgent: openseaHttpsAgent,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': referer,
+        'Origin': 'https://opensea.io',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Cookie': cookieHeader,
+        'x-app-id': 'os2-web',
+        'x-api-key': apiKeyToUse
+      },
+      timeout: 3000
+    });
+
+    const dataObj = gqlRes.data?.data;
+    const resultMap = new Map();
+    if (dataObj) {
+      const knownSelectors = ['4b61cd6f', '161ac21f', '4300a4e6'];
+      job.wallets.forEach((w, idx) => {
+        const actions = dataObj[`wallet_${idx}`]?.actions;
+        const sub = actions?.find(a => a?.transactionSubmissionData?.data)?.transactionSubmissionData 
+                 || actions?.[0]?.transactionSubmissionData;
+        if (sub?.data && sub.data.length >= 10) {
+          const selector = sub.data.toLowerCase().slice(2, 10);
+          if (knownSelectors.includes(selector)) {
+            resultMap.set(w.address.toLowerCase(), sub);
+          }
+        }
+      });
+    }
+    return resultMap;
+  } catch (err) {
+    return new Map();
+  }
+}
+
 // 4. Background Ticker Loop (5ms micro-poll for sub-second precision)
 setInterval(async () => {
   if (cloudScheduledJobs.size === 0) return;
@@ -2666,51 +2763,12 @@ setInterval(async () => {
         try {
           if (job.slug && (job.stage === 'allowlist')) {
             addCloudLog(jobId, 'T-12s: Querying OpenSea 1-Shot GraphQL for presale signatures...', 'warning');
-            const contractAddr = job.contractAddress;
-            if (contractAddr) {
-              const reqs = job.wallets.map(w => ({ address: w.address, quantity: job.quantity }));
-              const firstAddr = reqs[0]?.address?.toLowerCase();
-              const authCookie = firstAddr ? walletSessionCookies.get(firstAddr) : null;
-              
-              let queryVars = `$fromAssets: [AssetQuantityInput!]!, $recipient: Address`;
-              let queryBody = '';
-              const variables = {
-                fromAssets: [{ asset: { contractAddress: "0x0000000000000000000000000000000000000000", chain: 'robinhood' } }],
-                recipient: firstAddr
-              };
-              reqs.forEach((r, idx) => {
-                queryVars += `, $address_${idx}: Address!, $toAssets_${idx}: [AssetQuantityInput!]!`;
-                queryBody += `\n  wallet_${idx}: swap(address: $address_${idx}, fromAssets: $fromAssets, toAssets: $toAssets_${idx}, recipient: $recipient, action: MINT) { actions { ... on TransactionAction { transactionSubmissionData { to data value } } } }`;
-                variables[`address_${idx}`] = r.address;
-                variables[`toAssets_${idx}`] = [{ asset: { contractAddress: contractAddr, tokenId: '0', chain: 'robinhood' }, quantity: String(r.quantity || 1) }];
-              });
-              const gqlQuery = `query BatchMintActionTimelineQuery(${queryVars}) { ${queryBody} }`;
-              const gqlRes = await axios.post('https://gql.opensea.io/graphql', {
-                operationName: 'BatchMintActionTimelineQuery',
-                query: gqlQuery,
-                variables
-              }, {
-                headers: {
-                  'User-Agent': 'Mozilla/5.0',
-                  'X-API-KEY': getNextApiKey(),
-                  'Cookie': authCookie || `connected-account-server-hint=${firstAddr}`
-                },
-                timeout: 5000
-              });
-              const dataObj = gqlRes.data?.data;
-              if (dataObj) {
-                let secured = 0;
-                job.wallets.forEach((w, idx) => {
-                  const sub = dataObj[`wallet_${idx}`]?.actions?.[0]?.transactionSubmissionData;
-                  if (sub?.data) {
-                    job.signedCalldataMap.set(w.address.toLowerCase(), sub);
-                    secured++;
-                  }
-                });
-                if (secured > 0) {
-                  addCloudLog(jobId, `T-12s: Early OpenSea Signatures Secured for ${secured}/${job.wallets.length} wallets!`, 'success');
-                }
+            const resultMap = await fetchOpenSeaBatchCalldata(job);
+            if (resultMap && resultMap.size > 0) {
+              for (const [addr, sub] of resultMap.entries()) {
+                job.signedCalldataMap.set(addr, sub);
               }
+              addCloudLog(jobId, `T-12s: Early OpenSea Signatures Secured for ${resultMap.size}/${job.wallets.length} wallets!`, 'success');
             }
           }
         } catch (_) {}
@@ -2825,63 +2883,72 @@ setInterval(async () => {
             addCloudLog(jobId, `🎯 LOCKSTEP MEMPOOL BLAST CONFIRMED in ${blastOutcome.blastDurationMs}ms! Dispatched directly to Top ${job.activeBlastRpcs.length} Robinhood nodes!`, 'success');
           } else {
             addCloudLog(jobId, `⚡ Engaging 6-Key Staggered Laser Pipeline from Ashburn Edge...`, 'warning');
-            const contractAddr = job.contractAddress;
-            const reqs = job.wallets.map(w => ({ address: w.address, quantity: job.quantity }));
-            const firstAddr = reqs[0]?.address?.toLowerCase();
-            const authCookie = firstAddr ? walletSessionCookies.get(firstAddr) : null;
 
-            let queryVars = `$fromAssets: [AssetQuantityInput!]!, $recipient: Address`;
-            let queryBody = '';
-            const variables = {
-              fromAssets: [{ asset: { contractAddress: "0x0000000000000000000000000000000000000000", chain: 'robinhood' } }],
-              recipient: firstAddr
-            };
-            reqs.forEach((r, idx) => {
-              queryVars += `, $address_${idx}: Address!, $toAssets_${idx}: [AssetQuantityInput!]!`;
-              queryBody += `\n  wallet_${idx}: swap(address: $address_${idx}, fromAssets: $fromAssets, toAssets: $toAssets_${idx}, recipient: $recipient, action: MINT) { actions { ... on TransactionAction { transactionSubmissionData { to data value } } } }`;
-              variables[`address_${idx}`] = r.address;
-              variables[`toAssets_${idx}`] = [{ asset: { contractAddress: contractAddr, tokenId: '0', chain: 'robinhood' }, quantity: String(r.quantity || 1) }];
-            });
-            const gqlQuery = `query BatchMintActionTimelineQuery(${queryVars}) { ${queryBody} }`;
+            const allSecured = () => job.wallets.every(w => job.signedCalldataMap.has(w.address.toLowerCase()));
 
-            const gqlRes = await axios.post('https://gql.opensea.io/graphql', {
-              operationName: 'BatchMintActionTimelineQuery',
-              query: gqlQuery,
-              variables
-            }, {
-              headers: {
-                'User-Agent': 'Mozilla/5.0',
-                'X-API-KEY': getNextApiKey(),
-                'Cookie': authCookie || `connected-account-server-hint=${firstAddr}`
-              },
-              timeout: 3000
-            });
+            if (!allSecured()) {
+              const keysToUse = OPENSEA_API_KEYS.length > 0 ? OPENSEA_API_KEYS : ['5f32ee9b98e84ea184a514f975ad4f3f'];
+              const staggerTimers = [];
+              const staggerDelays = [0, 60, 130, 200, 270, 340]; // 70ms calibrated phase shift from Virginia edge
 
-            const dataObj = gqlRes.data?.data;
+              staggerDelays.forEach((delayMs, idx) => {
+                const key = keysToUse[idx % keysToUse.length];
+                const t = setTimeout(async () => {
+                  if (allSecured()) return;
+                  try {
+                    const m = await fetchOpenSeaBatchCalldata(job, key);
+                    if (m && m.size > 0) {
+                      for (const [addr, sub] of m.entries()) {
+                        if (!job.signedCalldataMap.has(addr)) {
+                          job.signedCalldataMap.set(addr, sub);
+                        }
+                      }
+                      addCloudLog(jobId, `🎯 [STAGGER PULSE #${idx + 1} HIT] Signature secured via Key #${idx + 1} at +${Date.now() - t0Start}ms!`, 'success');
+                    }
+                  } catch (_) {}
+                }, delayMs);
+                staggerTimers.push(t);
+              });
+
+              // Fast micro-poll loop (10ms resolution) waiting for all signatures
+              await new Promise((resolve) => {
+                const checkInterval = setInterval(() => {
+                  if (allSecured() || Date.now() - t0Start > 4000) {
+                    clearInterval(checkInterval);
+                    staggerTimers.forEach(t => clearTimeout(t));
+                    resolve();
+                  }
+                }, 10);
+              });
+            }
+
+            // Build & sign raw transactions with pre-computed gas & nonces
             const signedRawTxs = [];
-            if (dataObj) {
-              for (let i = 0; i < job.wallets.length; i++) {
-                const w = job.wallets[i];
-                const sub = dataObj[`wallet_${i}`]?.actions?.[0]?.transactionSubmissionData;
-                const toAddr = sub?.to || job.seaDropAddress;
-                const txData = sub?.data || '0x';
-                const val = sub?.value !== undefined ? BigInt(sub.value) : 0n;
+            for (let i = 0; i < job.wallets.length; i++) {
+              const w = job.wallets[i];
+              const sub = job.signedCalldataMap.get(w.address.toLowerCase());
+              if (!sub?.data) continue;
 
-                const tx = {
-                  to: toAddr,
-                  data: txData,
-                  value: val,
-                  nonce: w.nonce || 0,
-                  gasLimit: 220000n,
-                  maxFeePerGas: job.computedMaxFee || ethers.parseUnits('1.0', 'gwei'),
-                  maxPriorityFeePerGas: job.computedMaxPriority || ethers.parseUnits('0.5', 'gwei'),
-                  chainId: 4663,
-                  type: 2
-                };
-                const signer = new ethers.Wallet(w.privateKey);
-                const rawSigned = await signer.signTransaction(tx);
-                signedRawTxs.push(rawSigned);
-              }
+              const toAddr = sub.to || job.seaDropAddress;
+              const txData = sub.data;
+              const val = sub.value !== undefined && sub.value !== null
+                ? BigInt(sub.value)
+                : (job.pricePerNft && job.pricePerNft !== '0.0' ? ethers.parseEther(job.pricePerNft) * BigInt(job.quantity) : 0n);
+
+              const tx = {
+                to: toAddr,
+                data: txData,
+                value: val,
+                nonce: w.nonce || 0,
+                gasLimit: 220000n,
+                maxFeePerGas: job.computedMaxFee || ethers.parseUnits('1.0', 'gwei'),
+                maxPriorityFeePerGas: job.computedMaxPriority || ethers.parseUnits('0.5', 'gwei'),
+                chainId: 4663,
+                type: 2
+              };
+              const signer = new ethers.Wallet(w.privateKey);
+              const rawSigned = await signer.signTransaction(tx);
+              signedRawTxs.push(rawSigned);
             }
 
             if (signedRawTxs.length > 0) {
@@ -2891,11 +2958,13 @@ setInterval(async () => {
               addCloudLog(jobId, `🎯 LASER HIT + MEMPOOL BLAST CONFIRMED in ${Date.now() - t0Start}ms! Dispatched to Top ${job.activeBlastRpcs.length} nodes!`, 'success');
             } else {
               job.status = 'FAILED';
+              job.results = { error: 'Could not secure OpenSea signature at T-0 (Allowlist stage inactive or wallet not eligible)' };
               addCloudLog(jobId, `❌ Could not secure OpenSea signature at T-0.`, 'error');
             }
           }
         } catch (err) {
           job.status = 'FAILED';
+          job.results = { error: err.message || 'T-0 Execution Error' };
           addCloudLog(jobId, `❌ T-0 Blast Error: ${err.message}`, 'error');
         } finally {
           if (job.wallets) {
