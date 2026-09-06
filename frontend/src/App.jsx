@@ -1570,6 +1570,17 @@ function App() {
           }
 
           if (job?.status === 'EXECUTED') {
+            isPolling = false;
+            if (pollTimeoutId) clearTimeout(pollTimeoutId);
+
+            setIsScheduled(false);
+            setCloudJobId(null);
+            cloudJobIdRef.current = null;
+            cloudJobTargetEpochMsRef.current = null;
+            setCountdown('🎯 BLAST CONFIRMED');
+            try { triggerCelebration(); } catch (e) {}
+            try { playSound('success'); } catch (e) {}
+
             const acceptedTxs = (job?.results?.results || []).filter(r => r.success && r.txHash);
             log(`🎉 [US CLOUD MINT SUCCESS] Successfully executed in Ashburn, VA! Blast confirmed.`, 'success');
             if (acceptedTxs.length > 0) {
@@ -1578,51 +1589,53 @@ function App() {
                 log(`🌐 Robinhood Explorer: https://explorer.mainnet.chain.robinhood.com/tx/${r.txHash}`, 'info');
               });
 
-              // 📜 Real-time History & Quota Synchronization
-              const newHistoryItems = acceptedTxs.map(r => ({
-                id: `tx_cloud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                time: new Date().toLocaleString(),
-                wallet: r.walletAddress || wallets[0]?.address || 'Cloud Wallet',
-                contract: activeContract?.address || targetContractAddress || '',
-                txHash: r.txHash,
-                gasUsedNative: '0.00015',
-                gasUsedUsd: '0.38',
-                status: 'SUCCESS',
-                error: '',
-                taskName: activeAllowlistStage?.name ? `Cloud Mint (${activeAllowlistStage.name})` : (job.stage ? `Cloud Mint (${job.stage})` : 'Cloud Mint')
-              }));
+              try {
+                // 📜 Real-time History & Quota Synchronization
+                const resolvedContract = job?.contractAddress || (detectedContracts[selectedContractIndex]?.address) || collectionPreview?.contractAddress || '';
+                const resolvedStage = selectedTargetStage?.name || (job?.stage ? `Cloud Mint (${job.stage})` : 'Cloud Mint');
+                const addCount = Number(quantity) || Number(job?.quantity) || 1;
 
-              const curSaved = JSON.parse(localStorage.getItem('aerov3_history') || '[]');
-              const updatedHistory = [...newHistoryItems, ...curSaved].slice(0, 200);
-              localStorage.setItem('aerov3_history', JSON.stringify(updatedHistory));
-              setTxHistory(updatedHistory);
+                const newHistoryItems = acceptedTxs.map(r => ({
+                  id: `tx_cloud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                  time: new Date().toLocaleString(),
+                  wallet: r.walletAddress || (wallets && wallets[0]?.address) || 'Cloud Wallet',
+                  contract: resolvedContract,
+                  txHash: r.txHash,
+                  gasUsedNative: '0.00015',
+                  gasUsedUsd: '0.38',
+                  status: 'SUCCESS',
+                  error: '',
+                  taskName: resolvedStage
+                }));
 
-              const addCount = Number(mintQuantity) || 1;
-              setCurrentUser(prev => {
-                if (!prev) return prev;
-                const updated = { ...prev, total_mints: (prev.total_mints || 0) + addCount };
-                try {
-                  const savedAuth = localStorage.getItem('aerov3_auth_session');
-                  if (savedAuth) {
-                    const parsed = JSON.parse(savedAuth);
-                    if (parsed?.user) {
-                      parsed.user = updated;
-                      localStorage.setItem('aerov3_auth_session', JSON.stringify(parsed));
+                const curSaved = JSON.parse(localStorage.getItem('aerov3_history') || '[]');
+                const updatedHistory = [...newHistoryItems, ...curSaved].slice(0, 200);
+                localStorage.setItem('aerov3_history', JSON.stringify(updatedHistory));
+                setTxHistory(updatedHistory);
+
+                setCurrentUser(prev => {
+                  if (!prev) return prev;
+                  const updated = { ...prev, total_mints: (prev.total_mints || 0) + addCount };
+                  try {
+                    const savedAuth = localStorage.getItem('aerov3_auth_session');
+                    if (savedAuth) {
+                      const parsed = JSON.parse(savedAuth);
+                      if (parsed?.user) {
+                        parsed.user = updated;
+                        localStorage.setItem('aerov3_auth_session', JSON.stringify(parsed));
+                      }
                     }
-                  }
-                } catch (_) {}
-                return updated;
-              });
+                  } catch (_) {}
+                  return updated;
+                });
+              } catch (histErr) {
+                console.warn('[Cloud Mint] History sync non-fatal error:', histErr);
+              }
             }
-            setIsScheduled(false);
-            setCloudJobId(null);
-            cloudJobIdRef.current = null;
-            cloudJobTargetEpochMsRef.current = null;
-            setCountdown('🎯 BLAST CONFIRMED');
-            try { triggerCelebration(); } catch (e) {}
-            try { playSound('success'); } catch (e) {}
             return;
           } else if (job?.status === 'FAILED') {
+            isPolling = false;
+            if (pollTimeoutId) clearTimeout(pollTimeoutId);
             const errDetail = job?.results?.error || (Array.isArray(data.logs) && data.logs.length > 0 ? (data.logs[data.logs.length - 1]?.msg || data.logs[data.logs.length - 1]) : 'Execution failure');
             log(`❌ [US CLOUD MINT ERROR] VPS returned failure: ${errDetail}`, 'error');
             setIsScheduled(false);
@@ -1631,6 +1644,8 @@ function App() {
             cloudJobTargetEpochMsRef.current = null;
             return;
           } else if (job?.status === 'CANCELLED') {
+            isPolling = false;
+            if (pollTimeoutId) clearTimeout(pollTimeoutId);
             setIsScheduled(false);
             setCloudJobId(null);
             cloudJobIdRef.current = null;
