@@ -410,6 +410,22 @@ async function dbSaveUserConfig(userId, newConfig) {
   try {
     const existing = await dbGetUserConfig(userId) || {};
     const merged = { ...existing, ...newConfig };
+    if (Array.isArray(existing.txHistory) || Array.isArray(newConfig?.txHistory)) {
+      const existingList = Array.isArray(existing.txHistory) ? existing.txHistory : [];
+      const incomingList = Array.isArray(newConfig?.txHistory) ? newConfig.txHistory : [];
+      const seen = new Set();
+      const unioned = [];
+      [...incomingList, ...existingList].forEach(tx => {
+        const key = (tx?.txHash || tx?.id || '').toLowerCase();
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          unioned.push(tx);
+        } else if (!key) {
+          unioned.push(tx);
+        }
+      });
+      merged.txHistory = unioned.slice(0, 200);
+    }
     await axios.post(`${SUPABASE_URL}/rest/v1/app_user_configs?on_conflict=user_id`, {
       user_id: userId,
       config: merged,

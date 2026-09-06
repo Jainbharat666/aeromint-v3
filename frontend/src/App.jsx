@@ -10,6 +10,7 @@ import ChainIcon from './components/ChainIcon';
 import {
   syncVaultToCloud,
   fetchVaultFromCloud,
+  fetchCloudVaultConfig,
   syncCustomRpcsToCloud,
   fetchCustomRpcsFromCloud,
   incrementUserMintCount,
@@ -1923,6 +1924,29 @@ function App() {
 
           if (cfg.rpcMode) {
             setRpcMode(cfg.rpcMode);
+          }
+
+          // Auto-Restore Transaction History from Cloud
+          if (cfg.txHistory && Array.isArray(cfg.txHistory) && cfg.txHistory.length > 0) {
+            setTxHistory(prev => {
+              const seen = new Set();
+              const merged = [];
+              [...cfg.txHistory, ...(prev || [])].forEach(tx => {
+                const key = (tx.txHash || tx.id || '').toLowerCase();
+                if (key && !seen.has(key)) {
+                  seen.add(key);
+                  merged.push(tx);
+                } else if (!key) {
+                  merged.push(tx);
+                }
+              });
+              const capped = merged.slice(0, 200);
+              localStorage.setItem('aero_history', JSON.stringify(capped));
+              if (currentUser?.id) {
+                localStorage.setItem(`aero_u_${currentUser.id}_history`, JSON.stringify(capped));
+              }
+              return capped;
+            });
           }
 
           setIsCloudSynced(true);
