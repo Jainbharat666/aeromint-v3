@@ -1850,7 +1850,7 @@ app.post('/api/opensea/siwe-nonce', async (req, res) => {
     if (!address) return res.status(400).json({ success: false, error: 'Address required' });
     const referer = slug ? `https://opensea.io/collection/${slug}` : 'https://opensea.io';
 
-    const resp = await axios.post('https://opensea.io/__api/auth/siwe/nonce', {
+    const postNonce = async () => axios.post('https://opensea.io/__api/auth/siwe/nonce', {
       address: address.trim()
     }, {
       httpsAgent: openseaHttpsAgent,
@@ -1863,6 +1863,18 @@ app.post('/api/opensea/siwe-nonce', async (req, res) => {
       },
       timeout: 8000
     });
+
+    let resp;
+    try {
+      resp = await postNonce();
+    } catch (firstErr) {
+      if (firstErr.response?.status === 429) {
+        await new Promise(r => setTimeout(r, 400));
+        resp = await postNonce();
+      } else {
+        throw firstErr;
+      }
+    }
 
     return res.json({ success: true, nonce: resp.data.nonce });
   } catch (err) {
@@ -1882,7 +1894,7 @@ app.post('/api/opensea/siwe-verify', async (req, res) => {
     }
     const referer = slug ? `https://opensea.io/collection/${slug}` : 'https://opensea.io';
 
-    const resp = await axios.post('https://opensea.io/__api/auth/siwe/verify', {
+    const postVerify = async () => axios.post('https://opensea.io/__api/auth/siwe/verify', {
       message,
       signature,
       chainArch
@@ -1898,6 +1910,18 @@ app.post('/api/opensea/siwe-verify', async (req, res) => {
       },
       timeout: 8000
     });
+
+    let resp;
+    try {
+      resp = await postVerify();
+    } catch (firstErr) {
+      if (firstErr.response?.status === 429) {
+        await new Promise(r => setTimeout(r, 400));
+        resp = await postVerify();
+      } else {
+        throw firstErr;
+      }
+    }
 
     // Parse cookies from OpenSea response
     const rawCookies = resp.headers['set-cookie'] || [];

@@ -3938,51 +3938,78 @@ async function verifyOnChainMintPrice(contractAddress) {
 }
 
 // ⚡ OSNM-Z ENGINE: Query OpenSea GraphQL DropEligibilityQuery via SIWE
+const openseaSiweSessionCache = new Map();
+
 async function fetchOpenSeaGraphQLDropEligibility(walletObj, slug, chainId = 4663) {
     if (!walletObj?.privateKey || !slug) return null;
+    const addr = walletObj.address.toLowerCase();
+
+    // Resilient helper with 429 exponential backoff
+    const fetchWithRetry = async (url, options, maxRetries = 2) => {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const res = await fetch(url, options);
+                const data = await res.json();
+                if (res.status === 429 || (data.error && data.error.includes('Too Many Requests'))) {
+                    await new Promise(r => setTimeout(r, attempt * 400));
+                    continue;
+                }
+                return data;
+            } catch (e) {
+                if (attempt === maxRetries) return null;
+                await new Promise(r => setTimeout(r, attempt * 300));
+            }
+        }
+        return null;
+    };
+
     try {
-        // 1. Request Nonce from OpenSea via Backend Proxy
-        const nonceRes = await fetch(`${BACKEND_BASE}/api/opensea/siwe-nonce`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ address: walletObj.address, slug })
-        });
-        const nonceData = await nonceRes.json();
-        if (!nonceData.success || !nonceData.nonce) return null;
+        let cookies = openseaSiweSessionCache.get(addr);
 
-        // 2. Sign EIP-4361 SIWE message locally in RAM
-        const domain = 'opensea.io';
-        const uri = `https://opensea.io/collection/${slug}`;
-        const issuedAt = new Date().toISOString();
-        const statement = 'Click to sign in and accept the OpenSea Terms of Service (https://opensea.io/tos) and Privacy Policy (https://opensea.io/privacy).';
-        const message = `${domain} wants you to sign in with your Ethereum account:\n${walletObj.address}\n\n${statement}\n\nURI: ${uri}\nVersion: 1\nChain ID: ${chainId}\nNonce: ${nonceData.nonce}\nIssued At: ${issuedAt}`;
+        if (!cookies) {
+            // 1. Request Nonce from OpenSea via Backend Proxy with 429 retry
+            const nonceData = await fetchWithRetry(`${BACKEND_BASE}/api/opensea/siwe-nonce`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address: walletObj.address, slug })
+            });
+            if (!nonceData?.success || !nonceData?.nonce) return null;
 
-        const signer = new ethers.Wallet(walletObj.privateKey);
-        const signature = await signer.signMessage(message);
+            // 2. Sign EIP-4361 SIWE message locally in RAM
+            const domain = 'opensea.io';
+            const uri = `https://opensea.io/collection/${slug}`;
+            const issuedAt = new Date().toISOString();
+            const statement = 'Click to sign in and accept the OpenSea Terms of Service (https://opensea.io/tos) and Privacy Policy (https://opensea.io/privacy).';
+            const message = `${domain} wants you to sign in with your Ethereum account:\n${walletObj.address}\n\n${statement}\n\nURI: ${uri}\nVersion: 1\nChain ID: ${chainId}\nNonce: ${nonceData.nonce}\nIssued At: ${issuedAt}`;
 
-        // 3. Verify SIWE signature on backend to obtain authenticated OpenSea session
-        const verifyRes = await fetch(`${BACKEND_BASE}/api/opensea/siwe-verify`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: { domain, address: walletObj.address, statement, uri, version: '1', chainId: chainId.toString(), nonce: nonceData.nonce, issuedAt, accountType: 'Ethereum' },
-                signature,
-                address: walletObj.address,
-                chainArch: 'EVM',
-                slug
-            })
-        });
-        const verifyData = await verifyRes.json();
-        if (!verifyData.success || !verifyData.cookies) return null;
+            const signer = new ethers.Wallet(walletObj.privateKey);
+            const signature = await signer.signMessage(message);
+
+            // 3. Verify SIWE signature on backend with 429 retry
+            const verifyData = await fetchWithRetry(`${BACKEND_BASE}/api/opensea/siwe-verify`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: { domain, address: walletObj.address, statement, uri, version: '1', chainId: chainId.toString(), nonce: nonceData.nonce, issuedAt, accountType: 'Ethereum' },
+                    signature,
+                    address: walletObj.address,
+                    chainArch: 'EVM',
+                    slug
+                })
+            });
+            if (!verifyData?.success || !verifyData?.cookies) return null;
+
+            cookies = verifyData.cookies;
+            openseaSiweSessionCache.set(addr, cookies);
+        }
 
         // 4. Query DropEligibilityQuery on OpenSea private GraphQL
-        const eligRes = await fetch(`${BACKEND_BASE}/api/opensea/graphql-eligibility`, {
+        const eligData = await fetchWithRetry(`${BACKEND_BASE}/api/opensea/graphql-eligibility`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ slug, address: walletObj.address, cookies: verifyData.cookies })
+            body: JSON.stringify({ slug, address: walletObj.address, cookies })
         });
-        const eligData = await eligRes.json();
-        if (eligData.success && Array.isArray(eligData.stages)) {
+        if (eligData?.success && Array.isArray(eligData.stages)) {
             return eligData.stages;
         }
         return null;
@@ -4040,23 +4067,25 @@ async function checkWalletEligibility(contractAddress, walletAddresses) {
         console.warn('[Eligibility Fleet Fetch Fallback]:', e.message);
     }
 
-    // ⚡ STEP 1.5: OSNM-Z GraphQL Pre-Fetch in Rate-Limit Safe Chunks (Eliminates 429 Too Many Requests)
+    // ⚡ STEP 1.5: OSNM-Z GraphQL Pre-Fetch with Staggered Pacing & Concurrency Control (Eliminates 429)
     const graphqlStagesMap = new Map();
-    const GQL_CHUNK_SIZE = 3;
-    for (let i = 0; i < walletAddresses.length; i += GQL_CHUNK_SIZE) {
-        const chunk = walletAddresses.slice(i, i + GQL_CHUNK_SIZE);
-        await Promise.all(chunk.map(async (rawAddr) => {
-            const addr = rawAddr.toLowerCase();
-            const walletObj = wallets.find(w => w.address.toLowerCase() === addr);
-            if (walletObj?.privateKey && targetSlug) {
-                try {
-                    const stages = await fetchOpenSeaGraphQLDropEligibility(walletObj, targetSlug, selectedNetworkKey === 'robinhood' ? 4663 : 1);
-                    if (stages) graphqlStagesMap.set(addr, stages);
-                } catch (e) {}
-            }
+    const GQL_CONCURRENCY = 2;
+    for (let i = 0; i < walletAddresses.length; i += GQL_CONCURRENCY) {
+        const chunk = walletAddresses.slice(i, i + GQL_CONCURRENCY);
+        await Promise.all(chunk.map((rawAddr, subIdx) => {
+            return new Promise(r => setTimeout(r, subIdx * 100)).then(async () => {
+                const addr = rawAddr.toLowerCase();
+                const walletObj = wallets.find(w => w.address.toLowerCase() === addr);
+                if (walletObj?.privateKey && targetSlug) {
+                    try {
+                        const stages = await fetchOpenSeaGraphQLDropEligibility(walletObj, targetSlug, selectedNetworkKey === 'robinhood' ? 4663 : 1);
+                        if (stages) graphqlStagesMap.set(addr, stages);
+                    } catch (e) {}
+                }
+            });
         }));
-        if (i + GQL_CHUNK_SIZE < walletAddresses.length) {
-            await new Promise(r => setTimeout(r, 200));
+        if (i + GQL_CONCURRENCY < walletAddresses.length) {
+            await new Promise(r => setTimeout(r, 150));
         }
     }
 
