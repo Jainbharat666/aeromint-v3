@@ -5,13 +5,13 @@ cls
 
 set ROOT=%~dp0
 if "%ROOT:~-1%"=="\" set ROOT=%ROOT:~0,-1%
-set BACKUP_DIR=%ROOT%\..\old version v3
+set BACKUP_DIR=%ROOT%\..\aeromint v3 backup
 
 echo ===================================================================
 echo         🔄 AEROMINT V3 UNIVERSAL RESTORE MANAGER 🔄
 echo ===================================================================
 echo.
-echo Available Snapshots in old version v3:
+echo Available Snapshots in aeromint v3 backup:
 echo.
 
 node "%ROOT%\scripts\list_backups.cjs"

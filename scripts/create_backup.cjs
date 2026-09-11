@@ -2,7 +2,7 @@
  * AeroMint V3 Intelligent Backup Engine (V2-Style Flat Architecture)
  * 
  * 1. Synchronizes live backend files from US Cloud VPS (129.80.65.56) into local backend/
- * 2. Creates a clean, flat, unified backup in ..\old version v3\<NEXT_NUM>\ (exactly like V2!)
+ * 2. Creates a clean, flat, unified backup in ..\aeromint v3 backup\<NEXT_NUM>\ (exactly like V2!)
  * 3. Includes 1-click RESTORE_THIS_BACKUP.bat, push_to_github.bat, push_to_vps.bat
  * 4. Generates compressed <NEXT_NUM>.zip archive
  */
@@ -23,7 +23,7 @@ function log(msg, color = '') {
 }
 
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BACKUP_BASE = path.resolve(ROOT_DIR, '..', 'old version v3');
+const BACKUP_BASE = path.resolve(ROOT_DIR, '..', 'aeromint v3 backup');
 const VPS_HOST = '129.80.65.56';
 const VPS_USER = 'ubuntu';
 const REMOTE_DIR = '/home/ubuntu/aeromint-backend';
@@ -66,14 +66,19 @@ if (!fs.existsSync(BACKUP_BASE)) {
 }
 
 // 2. Detect Next Backup Version Number (1, 2, 3, ...)
-log('[2/5] Detecting next backup version number in old version v3...', ANSI_CYAN);
-let nextVersion = 1;
-while (
-  fs.existsSync(path.join(BACKUP_BASE, String(nextVersion))) ||
-  fs.existsSync(path.join(BACKUP_BASE, `${nextVersion}.zip`))
-) {
-  nextVersion++;
+log('[2/5] Detecting next backup version number in aeromint v3 backup...', ANSI_CYAN);
+let maxVersion = 0;
+if (fs.existsSync(BACKUP_BASE)) {
+  const entries = fs.readdirSync(BACKUP_BASE);
+  for (const entry of entries) {
+    const numStr = entry.replace(/\.zip$/i, '');
+    if (/^\d+$/.test(numStr)) {
+      const num = parseInt(numStr, 10);
+      if (num > maxVersion) maxVersion = num;
+    }
+  }
 }
+const nextVersion = maxVersion + 1;
 
 const destDir = path.join(BACKUP_BASE, String(nextVersion));
 const destZip = path.join(BACKUP_BASE, `${nextVersion}.zip`);

@@ -1,16 +1,16 @@
 /**
  * AeroMint V3 Backup Lister
- * Displays all available backup snapshots in ..\old version v3
+ * Displays all available backup snapshots in ..\aeromint v3 backup
  */
 
 const fs = require('fs');
 const path = require('path');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BACKUP_BASE = path.resolve(ROOT_DIR, '..', 'old version v3');
+const BACKUP_BASE = path.resolve(ROOT_DIR, '..', 'aeromint v3 backup');
 
 if (!fs.existsSync(BACKUP_BASE)) {
-  console.log('  (No backups found yet in old version v3)');
+  console.log('  (No backups found yet in aeromint v3 backup)');
   process.exit(0);
 }
 
@@ -21,7 +21,7 @@ const versionDirs = entries
   .sort((a, b) => a - b);
 
 if (versionDirs.length === 0) {
-  console.log('  (No numbered backup folders found in old version v3)');
+  console.log('  (No numbered backup folders found in aeromint v3 backup)');
   process.exit(0);
 }
 
