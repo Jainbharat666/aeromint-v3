@@ -107,7 +107,7 @@ const OPENSEA_API_KEY = OPENSEA_API_KEYS[0] || '';
 
 // Supabase PostgreSQL Cloud Config (Dedicated AeroMint V3 Database)
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfsyokzedsdofmtmjtqt.supabase.co').replace(/\/$/, '');
-const SUPABASE_KEY = process.env.SUPABASE_KEY || 'sb_publishable_GPW6AVq_IUmR3r0hq4De-w_OViDAsSi';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || '';
 
 const supabaseHeaders = {
   apikey: SUPABASE_KEY,
@@ -588,24 +588,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     // 1. Account existence check
     if (!user) {
-      if (isOwner) {
-        user = {
-          id: 'owner_master_001',
-          email: cleanEmail,
-          password_hash: hashPassword(password),
-          role: 'admin',
-          invite_code_used: 'MASTER_OWNER_KEY',
-          valid_until: new Date(Date.now() + 3650 * 86400000).toISOString(),
-          max_mints_allowed: 0,
-          total_mints: 0,
-          is_banned: false,
-          created_at: new Date().toISOString(),
-          last_active_at: new Date().toISOString()
-        };
-        await dbUpsertUser(user);
-      } else {
-        return res.status(404).json({ success: false, error: '❌ Account not found. Please activate your account with a VIP Invite Code first.' });
-      }
+      return res.status(404).json({ success: false, error: '❌ Account not found. Please activate your account with a VIP Invite Code first.' });
     }
 
     // 2. STRICT PASSWORD VERIFICATION FOR EVERYONE (INCLUDING OWNER!)

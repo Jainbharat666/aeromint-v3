@@ -56,7 +56,7 @@ if exist "%ROOT%\backend\utils" (
 
 echo.
 echo [3/4] Restarting aeromint-backend via PM2 on US VPS...
-ssh -i "%SSH_KEY%" -o StrictHostKeyChecking=no %VPS_USER%@%VPS_HOST% "pm2 restart aeromint-backend"
+ssh -i "%SSH_KEY%" -o StrictHostKeyChecking=no %VPS_USER%@%VPS_HOST% "pm2 restart aeromint-backend --update-env"
 if %ERRORLEVEL% NEQ 0 (
     echo [WARN] PM2 restart returned exit code %ERRORLEVEL%
 )
