@@ -668,20 +668,18 @@ app.post('/api/auth/change-password', async (req, res) => {
     const isOwner = cleanEmail === 'jainbharat666@gmail.com';
     const user = await dbGetUserByEmail(cleanEmail);
 
-    if (!user && !isOwner) {
+    if (!user) {
       return res.status(404).json({ success: false, error: 'User not found.' });
     }
 
     // B3+B4 FIX: Use bcrypt-aware verification, no plain_fallback
-    if (!isOwner && !verifyPassword(oldPassword, user.password_hash)) {
+    if (!verifyPassword(oldPassword, user.password_hash)) {
       return res.status(401).json({ success: false, error: '❌ Current password is incorrect.' });
     }
 
-    if (user) {
-      await dbUpdateUser(user.id, {
-        password_hash: hashPassword(newPassword)
-      });
-    }
+    await dbUpdateUser(user.id, {
+      password_hash: hashPassword(newPassword)
+    });
 
     console.log(`[Supabase PostgreSQL] Password changed for: ${cleanEmail}`);
     return res.json({ success: true, message: '✅ Password changed successfully!' });
