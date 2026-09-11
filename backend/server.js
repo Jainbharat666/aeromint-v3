@@ -583,18 +583,16 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     const isOwner = cleanEmail === 'jainbharat666@gmail.com';
     let user = await dbGetUserByEmail(cleanEmail);
 
-    const reqHash = hashPassword(password);
-
     // Generate fresh single-device active session token
     const sessionToken = `sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
 
-    // Platform Owner Master Override
-    if (isOwner) {
-      if (!user) {
+    // 1. Account existence check
+    if (!user) {
+      if (isOwner) {
         user = {
           id: 'owner_master_001',
           email: cleanEmail,
-          password_hash: reqHash,
+          password_hash: hashPassword(password),
           role: 'admin',
           invite_code_used: 'MASTER_OWNER_KEY',
           valid_until: new Date(Date.now() + 3650 * 86400000).toISOString(),
@@ -606,84 +604,63 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         };
         await dbUpsertUser(user);
       } else {
-        await dbUpdateUser(user.id, {
-          password_hash: reqHash,
-          role: 'admin',
-          is_banned: false,
-          last_active_at: new Date().toISOString()
-        });
+        return res.status(404).json({ success: false, error: '❌ Account not found. Please activate your account with a VIP Invite Code first.' });
       }
-
-      await dbSaveUserConfig(user.id, { session_token: sessionToken });
-      const userConfig = await dbGetUserConfig(user.id);
-
-      const clientSafeUser = {
-        id: user.id,
-        email: user.email,
-        role: 'admin',
-        invite_code_used: 'MASTER_OWNER_KEY',
-        valid_until: user.valid_until || new Date(Date.now() + 3650 * 86400000).toISOString(),
-        max_mints_allowed: 0,
-        total_mints: user.total_mints || 0,
-        is_banned: false,
-        created_at: user.created_at,
-        user_metadata: { role: 'admin', name: 'Bharat' }
-      };
-      return res.json({ success: true, user: clientSafeUser, sessionToken: sessionToken, config: userConfig });
     }
 
-    // Standard Member Login Verification
-    if (!user) {
-      return res.status(404).json({ success: false, error: '❌ Account not found. Please activate your account with a VIP Invite Code first.' });
-    }
-
-    // B3+B4 FIX: Use bcrypt-aware verifyPassword (supports legacy SHA-256 + new bcrypt hashes)
+    // 2. STRICT PASSWORD VERIFICATION FOR EVERYONE (INCLUDING OWNER!)
     if (!verifyPassword(password, user.password_hash)) {
       return res.status(401).json({ success: false, error: '❌ Incorrect password. Please try again.' });
     }
 
-    // B4 FIX: Auto-upgrade legacy SHA-256 hash to bcrypt on successful login
+    // 3. Auto-upgrade legacy SHA-256 hash to bcrypt on successful login
     if (user.password_hash && !user.password_hash.startsWith('$2')) {
       await dbUpdateUser(user.id, { password_hash: hashPassword(password) });
     }
 
-    if (user.is_banned) {
+    // 4. Ban check (Owner is never banned)
+    if (user.is_banned && !isOwner) {
       return res.status(403).json({ success: false, error: '🚫 Account Suspended. Your access has been deactivated by Administrator.' });
     }
 
-    // Check Time Expiry
-    if (user.valid_until && new Date(user.valid_until) < new Date()) {
-      return res.status(403).json({
-        success: false,
-        error: `⏳ VIP Validity Expired. Your subscription ended on ${new Date(user.valid_until).toLocaleDateString()}. Please contact Admin to renew.`
-      });
+    // 5. Expiry & Quota checks (Exempt for owner)
+    if (!isOwner) {
+      if (user.valid_until && new Date(user.valid_until) < new Date()) {
+        return res.status(403).json({
+          success: false,
+          error: `⏳ VIP Validity Expired. Your subscription ended on ${new Date(user.valid_until).toLocaleDateString()}. Please contact Admin to renew.`
+        });
+      }
+
+      if (user.max_mints_allowed > 0 && user.total_mints >= user.max_mints_allowed) {
+        return res.status(403).json({
+          success: false,
+          error: `🎯 Mint Quota Exhausted. You have completed all ${user.max_mints_allowed} allocated mints for this key. Contact Admin to extend quota.`
+        });
+      }
     }
 
-    // Check Mint Quota Expiry
-    if (user.max_mints_allowed > 0 && user.total_mints >= user.max_mints_allowed) {
-      return res.status(403).json({
-        success: false,
-        error: `🎯 Mint Quota Exhausted. You have completed all ${user.max_mints_allowed} allocated mints for this key. Contact Admin to extend quota.`
-      });
-    }
+    // 6. Update last active timestamp ONLY (NEVER OVERWRITE password_hash!)
+    await dbUpdateUser(user.id, {
+      last_active_at: new Date().toISOString(),
+      ...(isOwner ? { role: 'admin', is_banned: false } : {})
+    });
 
-    await dbUpdateUser(user.id, { last_active_at: new Date().toISOString() });
-
-    // Enforce Single-Device Concurrency: Save new sessionToken so older devices get invalidated on next heartbeat!
+    // 7. Enforce Single-Device Concurrency: Save new sessionToken so older devices get invalidated on next heartbeat!
     await dbSaveUserConfig(user.id, { session_token: sessionToken, last_login_ip: req.ip });
     const userConfig = await dbGetUserConfig(user.id);
 
     const clientSafeUser = {
       id: user.id,
       email: user.email,
-      role: user.role,
+      role: isOwner ? 'admin' : (user.role || 'vip_member'),
       invite_code_used: user.invite_code_used,
-      valid_until: user.valid_until,
-      max_mints_allowed: user.max_mints_allowed || 0,
+      valid_until: isOwner ? (user.valid_until || new Date(Date.now() + 3650 * 86400000).toISOString()) : user.valid_until,
+      max_mints_allowed: isOwner ? 0 : (user.max_mints_allowed || 0),
       total_mints: user.total_mints || 0,
-      is_banned: user.is_banned,
+      is_banned: isOwner ? false : user.is_banned,
       created_at: user.created_at,
-      user_metadata: { role: user.role, name: cleanEmail.split('@')[0] }
+      user_metadata: { role: isOwner ? 'admin' : user.role, name: isOwner ? 'Bharat' : cleanEmail.split('@')[0] }
     };
 
     return res.json({ success: true, user: clientSafeUser, sessionToken: sessionToken, config: userConfig });
