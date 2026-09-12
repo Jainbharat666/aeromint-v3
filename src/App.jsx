@@ -3713,6 +3713,35 @@ function App() {
 
     if (successCount > 0) {
       log(`🔐 [SIWE VIP SESSIONS ARMED] ${successCount}/${walletsList.length} wallets authenticated with OpenSea!`, 'success');
+
+      // 🛡️ DUAL-ACTIVE ARBITER: Push verified cookies to active US Cloud VPS job
+      const activeCloudJobId = cloudJobIdRef.current;
+      if (activeCloudJobId && siweCookiesCacheRef.current && siweCookiesCacheRef.current.size > 0) {
+        try {
+          const cookiesMap = {};
+          for (const [addr, ck] of siweCookiesCacheRef.current.entries()) {
+            cookiesMap[addr] = ck;
+          }
+          const effectiveToken = (currentUser?.session_token || (typeof localStorage !== 'undefined' ? localStorage.getItem('aerov3_session_token') : '') || currentUser?.id || 'owner_master_001');
+          fetch(`${BACKEND_BASE || ''}/api/cloud-mint/sync-cookies`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-session-token': effectiveToken,
+              'x-user-email': currentUser?.email || 'jainbharat666@gmail.com',
+              'x-user-id': currentUser?.id || 'owner_master_001',
+              'Authorization': `Bearer ${effectiveToken}`
+            },
+            body: JSON.stringify({ jobId: activeCloudJobId, cookiesMap })
+          }).then(res => res.json()).then(data => {
+            if (data?.success) {
+              log(`🔄 [SIWE DUAL-SYNC] Verified VIP sessions pushed to Virginia Cloud VPS (Mounted: ${data.mountedCount}, Standby: ${data.retainedCount})`, 'info');
+            }
+          }).catch(() => {});
+        } catch (syncErr) {
+          console.warn('[SIWE Cloud Sync Warning]:', syncErr?.message);
+        }
+      }
     } else {
       log(`ℹ️ [SIWE FALLBACK] Continuing with Hint-Based session (Zero Impact)`, 'info');
     }

@@ -260,6 +260,12 @@ assertInvariant(
 
 assertInvariant(
   'Backend',
+  'Dual-Active SIWE Arbiter sync route (/api/cloud-mint/sync-cookies) active',
+  serverContent.includes("app.post('/api/cloud-mint/sync-cookies', adminAuthMiddleware")
+);
+
+assertInvariant(
+  'Backend',
   'Autonomous ticker loop runs with 5ms micro-poll precision',
   serverContent.includes('// 4. Background Ticker Loop (5ms micro-poll for sub-second precision)') &&
   serverContent.includes('}, 5);')
@@ -349,8 +355,8 @@ assertInvariant(
 
 assertInvariant(
   'Backend',
-  'T-0 Flight-time lead trigger (120ms lead for OpenSea GraphQL, 10ms for pre-signed)',
-  serverContent.includes('const triggerThreshold = (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) ? 10 : 120;')
+  'T-0 Flight-time lead trigger (15ms lead for OpenSea GraphQL, 10ms for pre-signed)',
+  serverContent.includes('const triggerThreshold = (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) ? 10 : 15;')
 );
 
 assertInvariant(

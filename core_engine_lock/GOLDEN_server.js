@@ -2789,6 +2789,44 @@ app.post('/api/cloud-mint/cancel', adminAuthMiddleware, async (req, res) => {
   return res.json({ success: true, message: 'Job not found or already executed.' });
 });
 
+// 2.5. Dual-Active SIWE Arbiter: Hot-Sync Verified OpenSea VIP Session Cookies from Frontend
+app.post('/api/cloud-mint/sync-cookies', adminAuthMiddleware, async (req, res) => {
+  try {
+    const { jobId, cookiesMap } = req.body;
+    if (!cookiesMap || typeof cookiesMap !== 'object') {
+      return res.status(400).json({ success: false, error: 'cookiesMap required' });
+    }
+
+    let mountedCount = 0;
+    let retainedCount = 0;
+
+    for (const [rawAddr, cookieStr] of Object.entries(cookiesMap)) {
+      const addr = rawAddr.toLowerCase();
+      if (!cookieStr) continue;
+
+      // Priority Arbiter: If Virginia VPS already secured native lowest-latency 28ms cookies, retain native!
+      if (walletSessionCookies.has(addr)) {
+        retainedCount++;
+      } else {
+        walletSessionCookies.set(addr, cookieStr);
+        mountedCount++;
+      }
+    }
+
+    if (jobId && cloudScheduledJobs.has(jobId)) {
+      if (mountedCount > 0) {
+        addCloudLog(jobId, `🛡️ [SIWE RESCUE] Hot-mounted ${mountedCount} verified OpenSea VIP sessions from Frontend into VPS RAM!`, 'success');
+      } else if (retainedCount > 0) {
+        addCloudLog(jobId, `🎯 [SIWE PRIORITY] Virginia Edge native VIP sessions active (${retainedCount} wallets). Frontend backup held on standby.`, 'info');
+      }
+    }
+
+    return res.json({ success: true, mountedCount, retainedCount });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 3. Query Cloud Job Status
 app.get('/api/cloud-mint/status', async (req, res) => {
   const { jobId } = req.query;
@@ -2973,26 +3011,59 @@ setInterval(async () => {
           if (job.slug && job.wallets && job.wallets.length > 0) {
             addCloudLog(jobId, `T-20s: Authenticating ${job.wallets.length} wallets with OpenSea SIWE directly from Virginia (28ms)...`, 'info');
             const referer = `https://opensea.io/collection/${job.slug}`;
+            const activeChainId = String(job.network === 'robinhood' ? 4663 : 1);
             await Promise.allSettled(job.wallets.map(async (w) => {
               try {
-                const nonceRes = await axios.get('https://opensea.io/__api/auth/siwe/nonce', {
-                  headers: { 'User-Agent': 'Mozilla/5.0', Referer: referer },
+                const nonceRes = await axios.post('https://opensea.io/__api/auth/siwe/nonce', {}, {
+                  httpsAgent: openseaHttpsAgent,
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    Referer: referer,
+                    Origin: 'https://opensea.io',
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json'
+                  },
                   timeout: 4000
                 });
                 const nonce = nonceRes.data?.nonce;
                 if (!nonce) return;
 
+                const checksumAddress = ethers.getAddress(w.address);
+                const domain = 'opensea.io';
+                const uri = `https://opensea.io/collection/${job.slug}`;
                 const issuedAt = new Date().toISOString();
-                const siweMsg = `opensea.io wants you to sign in with your Ethereum account:\n${w.address}\n\nSign in with Ethereum to the app.\n\nURI: https://opensea.io\nVersion: 1\nChain ID: 4663\nNonce: ${nonce}\nIssued At: ${issuedAt}`;
-                
+                const statement = 'Click to sign in and accept the OpenSea Terms of Service (https://opensea.io/tos) and Privacy Policy (https://opensea.io/privacy).';
+                const siweMsg = `${domain} wants you to sign in with your Ethereum account:\n${checksumAddress}\n\n${statement}\n\nURI: ${uri}\nVersion: 1\nChain ID: ${activeChainId}\nNonce: ${nonce}\nIssued At: ${issuedAt}`;
+
                 const signer = new ethers.Wallet(w.privateKey);
                 const signature = await signer.signMessage(siweMsg);
 
+                const messageObj = {
+                  domain,
+                  address: checksumAddress,
+                  statement,
+                  uri,
+                  version: '1',
+                  chainId: activeChainId,
+                  nonce,
+                  issuedAt,
+                  accountType: 'Ethereum'
+                };
+
                 const verifyRes = await axios.post('https://opensea.io/__api/auth/siwe/verify', {
-                  message: siweMsg,
-                  signature
+                  message: messageObj,
+                  signature,
+                  chainArch: 'EVM'
                 }, {
-                  headers: { 'User-Agent': 'Mozilla/5.0', Referer: referer },
+                  httpsAgent: openseaHttpsAgent,
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    Referer: referer,
+                    Origin: 'https://opensea.io',
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                    Cookie: `connected-account-server-hint=${w.address.toLowerCase()};`
+                  },
                   timeout: 4000
                 });
 
@@ -3002,7 +3073,13 @@ setInterval(async () => {
                 walletSessionCookies.set(w.address.toLowerCase(), fullCookies);
               } catch (_) {}
             }));
-            addCloudLog(jobId, `T-20s: SIWE Pre-authentication completed in Virginia!`, 'success');
+
+            const authedCount = job.wallets.filter(w => walletSessionCookies.has(w.address.toLowerCase())).length;
+            if (authedCount > 0) {
+              addCloudLog(jobId, `T-20s: SIWE Pre-authentication completed in Virginia! (${authedCount}/${job.wallets.length} VIP Sessions Armed)`, 'success');
+            } else {
+              addCloudLog(jobId, `T-20s SIWE Notice: 0 native sessions secured. Awaiting frontend backup sync.`, 'warning');
+            }
           }
         } catch (e) {
           addCloudLog(jobId, `T-20s SIWE Notice: ${e.message}`, 'warning');
@@ -3233,8 +3310,8 @@ setInterval(async () => {
       })();
     }
 
-    // ⚡ EXACT T-0 / FLIGHT-TIME LEAD TRIGGER (120ms lead offset so Pulse #1 lands at OpenSea at exact T-0)
-    const triggerThreshold = (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) ? 10 : 120;
+    // ⚡ EXACT T-0 / FLIGHT-TIME LEAD TRIGGER (15ms lead offset so Pulse #1 lands at OpenSea at exact T-0 from Virginia)
+    const triggerThreshold = (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) ? 10 : 15;
     if (diff <= triggerThreshold && !job.executedT0) {
       job.executedT0 = true;
       job.status = 'EXECUTING_T0';
