@@ -840,7 +840,7 @@ function App() {
   const [pricePerNft, setPricePerNft] = useState('0.0');
   const [pricePerNftUsd, setPricePerNftUsd] = useState('0.00');
   const [otherParams, setOtherParams] = useState({});
-  const [gasSpeed, setGasSpeed] = useState('fast'); // 'safe', 'fast', 'surge', 'hyped', 'custom'
+  const [gasSpeed, setGasSpeed] = useState('turbo'); // 'safe', 'turbo', 'surge', 'hyped', 'ultra_hyped', 'custom'
   const [seaDropStage, setSeaDropStage] = useState('public'); // 'public', 'allowlist'
   const [selectedTargetStage, setSelectedTargetStage] = useState(null);
   const [seaDropAllowListProof, setSeaDropAllowListProof] = useState([]);
@@ -934,6 +934,7 @@ function App() {
     priorityFee: '0.0',
     standard: '0.0',
     fast: '0.0',
+    ultra_hyped: '0.0',
     blockNumber: 0,
     networkName: '',
     chainId: 0,
@@ -1459,7 +1460,7 @@ function App() {
         stage: stageToUse,
         pricePerNft: String(priceToUse),
         quantity: Number(quantity) || 1,
-        gasSpeed: gasSpeed || 'fast',
+        gasSpeed: gasSpeed || 'turbo',
         customMaxFee: customMaxFee || null,
         customPriorityFee: customMaxPriority || null,
         blastNodeCount: Number(blastNodeCount) || 3,
@@ -1474,7 +1475,7 @@ function App() {
         }))
       };
 
-      log(`☁️ [US CLOUD SCHEDULER] Arming job on US Cloud VPS with Top ${Number(blastNodeCount) || 3} Multi-Blast Model (${targetRpcs.length} candidate RPCs pooled | Gas: ${(gasSpeed || 'fast').toUpperCase()})...`, 'info');
+      log(`☁️ [US CLOUD SCHEDULER] Arming job on US Cloud VPS with Top ${Number(blastNodeCount) || 3} Multi-Blast Model (${targetRpcs.length} candidate RPCs pooled | Gas: ${(gasSpeed || 'turbo').toUpperCase()})...`, 'info');
 
       const effectiveToken = sessionToken || currentUser?.session_token || currentUser?.id || 'owner_master_001';
       const headers = {
@@ -2361,16 +2362,26 @@ function App() {
             let computedMaxFee = (baseGas * 115n) / 100n + priorityTipBase;
             let computedMaxPriority = priorityTipBase;
 
-            if (gasSpeed === 'hyped') {
-              const minHypedTip = ethers.parseUnits('0.50', 'gwei');
-              const hypedTip = priorityTipBase * 250n / 100n > minHypedTip ? (priorityTipBase * 250n / 100n) : minHypedTip;
-              computedMaxFee = (baseGas * 250n) / 100n + hypedTip;
+            if (gasSpeed === 'ultra_hyped') {
+              const minUltraTip = ethers.parseUnits('4.00', 'gwei');
+              const ultraTip = priorityTipBase * 400n / 100n > minUltraTip ? (priorityTipBase * 400n / 100n) : minUltraTip;
+              computedMaxFee = (baseGas * 400n) / 100n + ultraTip;
+              computedMaxPriority = ultraTip;
+            } else if (gasSpeed === 'hyped') {
+              const minHypedTip = ethers.parseUnits('3.00', 'gwei');
+              const hypedTip = priorityTipBase * 300n / 100n > minHypedTip ? (priorityTipBase * 300n / 100n) : minHypedTip;
+              computedMaxFee = (baseGas * 300n) / 100n + hypedTip;
               computedMaxPriority = hypedTip;
             } else if (gasSpeed === 'surge') {
-              const minSurgeTip = ethers.parseUnits('0.05', 'gwei');
-              const surgeTip = priorityTipBase * 160n / 100n > minSurgeTip ? (priorityTipBase * 160n / 100n) : minSurgeTip;
-              computedMaxFee = (baseGas * 160n) / 100n + surgeTip;
+              const minSurgeTip = ethers.parseUnits('1.50', 'gwei');
+              const surgeTip = priorityTipBase * 200n / 100n > minSurgeTip ? (priorityTipBase * 200n / 100n) : minSurgeTip;
+              computedMaxFee = (baseGas * 200n) / 100n + surgeTip;
               computedMaxPriority = surgeTip;
+            } else if (gasSpeed === 'turbo' || gasSpeed === 'fast') {
+              const minFastTip = ethers.parseUnits('0.50', 'gwei');
+              const fastTip = priorityTipBase * 150n / 100n > minFastTip ? (priorityTipBase * 150n / 100n) : minFastTip;
+              computedMaxFee = (baseGas * 150n) / 100n + fastTip;
+              computedMaxPriority = fastTip;
             }
 
             const seadropTarget = getSeaDropAddress(selectedNetworkKey);
@@ -2748,9 +2759,10 @@ function App() {
 
       // Real-time market recommended rates
       const standardGwei = (baseNum * 1.15 + tipNum).toFixed(3);
-      const fastGwei = (baseNum * 1.35 + tipNum * 1.3).toFixed(3);
-      const surgeGwei = (baseNum * 1.60 + Math.max(tipNum * 1.6, 0.05)).toFixed(3);
-      const hypedGwei = (baseNum * 2.50 + Math.max(tipNum * 2.5, 0.50)).toFixed(3);
+      const fastGwei = (baseNum * 1.50 + Math.max(tipNum * 1.5, 0.50)).toFixed(3);
+      const surgeGwei = (baseNum * 2.00 + Math.max(tipNum * 2.0, 1.50)).toFixed(3);
+      const hypedGwei = (baseNum * 3.00 + Math.max(tipNum * 3.0, 3.00)).toFixed(3);
+      const ultraHypedGwei = (baseNum * 4.00 + Math.max(tipNum * 4.0, 4.00)).toFixed(3);
 
       setLiveGasData(prev => {
         const fetchedBlock = latestBlock?.number ? Number(latestBlock.number) : 0;
@@ -2768,6 +2780,7 @@ function App() {
           fast: fastGwei,
           surge: surgeGwei,
           hyped: hypedGwei,
+          ultra_hyped: ultraHypedGwei,
           blockNumber: finalBlockNumber,
           networkName: netConfig.name,
           chainId: netConfig.chainId,
@@ -5755,7 +5768,11 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
 
     // Apply User's Gas Speed Multiplier to Live Detected Gas
     let feeRate = currentBaseFee;
-    if (gasSpeed === 'hyped') {
+    if (gasSpeed === 'ultra_hyped') {
+      const ultraBase = (currentBaseFee * 400n) / 100n;
+      const ultraTip = livePriorityFee > 0n ? (livePriorityFee * 400n) / 100n : ethers.parseUnits('4.00', 'gwei');
+      feeRate = ultraBase + ultraTip;
+    } else if (gasSpeed === 'hyped') {
       const hypedBase = (currentBaseFee * 300n) / 100n;
       const hypedTip = livePriorityFee > 0n ? (livePriorityFee * 300n) / 100n : ethers.parseUnits('3.00', 'gwei');
       feeRate = hypedBase + hypedTip;
@@ -5763,7 +5780,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
       const surgeBase = (currentBaseFee * 200n) / 100n;
       const surgeTip = livePriorityFee > 0n ? (livePriorityFee * 200n) / 100n : ethers.parseUnits('1.50', 'gwei');
       feeRate = surgeBase + surgeTip;
-    } else if (gasSpeed === 'fast') {
+    } else if (gasSpeed === 'turbo' || gasSpeed === 'fast') {
       const fastBase = (currentBaseFee * 150n) / 100n;
       const fastTip = livePriorityFee > 0n ? (livePriorityFee * 150n) / 100n : ethers.parseUnits('0.50', 'gwei');
       feeRate = fastBase + fastTip;
@@ -6465,7 +6482,14 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     let computedMaxFee = (baseGas * 115n) / 100n + priorityTipBase;
     let computedMaxPriority = priorityTipBase;
 
-    if (gasSpeed === 'hyped') {
+    if (gasSpeed === 'ultra_hyped') {
+      // Ultra Hyped / Nuclear Gas War: 4.0x BaseFee + 4.00 Gwei Priority Tip — maximum aggression
+      const minUltraTip = ethers.parseUnits('4.00', 'gwei');
+      const ultraTip = priorityTipBase * 400n / 100n > minUltraTip ? (priorityTipBase * 400n / 100n) : minUltraTip;
+      const ultraBase = (baseGas * 400n) / 100n; // 4.0x base fee headroom
+      computedMaxFee = ultraBase + ultraTip;
+      computedMaxPriority = ultraTip;
+    } else if (gasSpeed === 'hyped') {
       // Hyped Sniper / Gas War Mode: 3.0x BaseFee + 3.00 Gwei Priority Tip for guaranteed Block 0 placement in competitive drops
       const minHypedTip = ethers.parseUnits('3.00', 'gwei');
       const hypedTip = priorityTipBase * 300n / 100n > minHypedTip ? (priorityTipBase * 300n / 100n) : minHypedTip;
@@ -6479,7 +6503,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
       const surgeBase = (baseGas * 200n) / 100n;
       computedMaxFee = surgeBase + surgeTip;
       computedMaxPriority = surgeTip;
-    } else if (gasSpeed === 'fast') {
+    } else if (gasSpeed === 'turbo' || gasSpeed === 'fast') {
       // Turbo Mode: 1.5x base fee buffer + 0.50 Gwei tip
       const minFastTip = ethers.parseUnits('0.50', 'gwei');
       const fastTip = priorityTipBase * 150n / 100n > minFastTip ? (priorityTipBase * 150n / 100n) : minFastTip;
@@ -8416,7 +8440,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     setSelectedFunctionName(p.funcName);
     setQuantity(p.quantity);
     setPricePerNft(p.pricePerNft);
-    setGasSpeed(p.gasSpeed);
+    setGasSpeed(p.gasSpeed === 'fast' ? 'turbo' : p.gasSpeed);
     setCustomMaxFee(p.customMaxFee);
     setCustomMaxPriority(p.customMaxPriority);
     setCustomGasLimit(p.customGasLimit);
@@ -9289,6 +9313,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                       const turboCost = calcEst(baseGwei * 1.50 + 0.50);
                       const surgeCost = calcEst(baseGwei * 2.00 + 1.50);
                       const hypedCost = calcEst(baseGwei * 3.00 + 3.00);
+                      const ultraHypedCost = calcEst(baseGwei * 4.00 + 4.00);
 
                       return (
                         <>
@@ -9311,14 +9336,14 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
 
                           {/* 2. Turbo (Cyan/Blue) */}
                           <div 
-                            className={`gas-speed-card turbo ${gasSpeed === 'fast' ? 'active' : ''}`}
+                            className={`gas-speed-card turbo ${gasSpeed === 'turbo' ? 'active' : ''}`}
                             style={{
-                              borderColor: gasSpeed === 'fast' ? '#38bdf8' : 'rgba(56, 189, 248, 0.25)',
-                              background: gasSpeed === 'fast' ? 'rgba(56, 189, 248, 0.16)' : 'rgba(0,0,0,0.35)',
-                              boxShadow: gasSpeed === 'fast' ? '0 0 16px rgba(56, 189, 248, 0.45)' : 'none',
-                              borderWidth: gasSpeed === 'fast' ? '2px' : '1px'
+                              borderColor: gasSpeed === 'turbo' ? '#38bdf8' : 'rgba(56, 189, 248, 0.25)',
+                              background: gasSpeed === 'turbo' ? 'rgba(56, 189, 248, 0.16)' : 'rgba(0,0,0,0.35)',
+                              boxShadow: gasSpeed === 'turbo' ? '0 0 16px rgba(56, 189, 248, 0.45)' : 'none',
+                              borderWidth: gasSpeed === 'turbo' ? '2px' : '1px'
                             }}
-                            onClick={() => setGasSpeed('fast')}
+                            onClick={() => setGasSpeed('turbo')}
                             title="Turbo Fast Gas: 1.5x BaseFee + 0.50 Gwei Tip"
                           >
                             <h4 style={{ margin: '0 0 2px 0', color: '#38bdf8' }}>🚀 Turbo</h4>
@@ -9360,7 +9385,24 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                             <span style={{ fontSize: '0.62rem', color: '#fca5a5' }}>3.0x Base + 3.0 Tip</span>
                           </div>
 
-                          {/* 5. Custom (Purple) */}
+                          {/* 5. Ultra Hyped (Deep Crimson/Skull) */}
+                          <div 
+                            className={`gas-speed-card ultra-hyped ${gasSpeed === 'ultra_hyped' ? 'active' : ''}`}
+                            style={{ 
+                              borderColor: gasSpeed === 'ultra_hyped' ? '#dc2626' : 'rgba(220, 38, 38, 0.25)', 
+                              background: gasSpeed === 'ultra_hyped' ? 'rgba(220, 38, 38, 0.20)' : 'rgba(0,0,0,0.35)',
+                              boxShadow: gasSpeed === 'ultra_hyped' ? '0 0 20px rgba(220, 38, 38, 0.55), 0 0 40px rgba(220, 38, 38, 0.20)' : 'none',
+                              borderWidth: gasSpeed === 'ultra_hyped' ? '2px' : '1px'
+                            }} 
+                            onClick={() => setGasSpeed('ultra_hyped')} 
+                            title="Maximum Gas War Mode: 4.0x BaseFee + 4.00 Gwei Priority Tip — Absolute Top-of-Block Domination!"
+                          >
+                            <h4 style={{ margin: '0 0 2px 0', color: '#ff4444' }}>🔥💀 Ultra Hyped</h4>
+                            <p style={{ margin: '0 0 2px 0', color: '#ff4444', fontWeight: 'bold', fontSize: '0.78rem' }}>{ultraHypedCost}</p>
+                            <span style={{ fontSize: '0.62rem', color: '#fca5a5' }}>4.0x Base + 4.0 Tip</span>
+                          </div>
+
+                          {/* 6. Custom (Purple) */}
                           <div 
                             className={`gas-speed-card custom ${gasSpeed === 'custom' ? 'active' : ''}`}
                             style={{

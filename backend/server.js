@@ -2461,7 +2461,7 @@ async function cloudExecuteMempoolBlast(rawSignedTxs, targetRpcs = null) {
       let isResolved = false;
 
       blastUrls.forEach(url => {
-        axios.post(url, payload, { timeout: 3500, headers: { 'Content-Type': 'application/json' } })
+        axios.post(url, payload, { timeout: 6000, headers: { 'Content-Type': 'application/json' } })
           .then(res => {
             if (res.data?.result) {
               acceptedCount++;
@@ -3141,14 +3141,15 @@ setInterval(async () => {
                 try {
                   const balNft = Number(await nftContract.balanceOf(w.address));
                   w.nftBalance = balNft;
-                  if (maxOnChain === 0 || (balNft + Number(job.quantity || 1) > maxOnChain)) {
-                    allCanMintDirect = false;
+                  if (maxOnChain > 0 && (balNft + Number(job.quantity || 1) > maxOnChain)) {
+                    allCanMintDirect = false; // Wallet already at or over on-chain limit
                   }
                 } catch (_) {
                   allCanMintDirect = false;
                 }
               }));
               job.canMintPublicDirect = allCanMintDirect;
+              job.preflightT10Completed = true; // FIX: Mark T-10s async as done (race condition safety)
               if (allCanMintDirect) {
                 addCloudLog(jobId, `T-10s: On-chain Public Drop verified (Limit: ${maxOnChain})! Zero-signature 0ms Block 0 direct path armed!`, 'success');
               } else {
@@ -3184,20 +3185,28 @@ setInterval(async () => {
             maxFee = (baseGas * 115n) / 100n + ethers.parseUnits('0.005', 'gwei');
             maxPriority = ethers.parseUnits('0.005', 'gwei');
           } else if (speed === 'fast' || speed === 'turbo') {
-            // Turbo: 1.35x Base Fee + 0.02 Gwei priority tip (Standard fast mint without overpaying)
-            maxFee = (baseGas * 135n) / 100n + ethers.parseUnits('0.02', 'gwei');
-            maxPriority = ethers.parseUnits('0.02', 'gwei');
+            // Turbo: 1.50x Base Fee + 0.50 Gwei priority tip (Standard fast mint without overpaying)
+            maxFee = (baseGas * 150n) / 100n + ethers.parseUnits('0.50', 'gwei');
+            maxPriority = ethers.parseUnits('0.50', 'gwei');
           } else if (speed === 'surge') {
-            // Surge: 1.65x Base Fee + 0.08 Gwei priority tip (Traffic spike buffer)
-            maxFee = (baseGas * 165n) / 100n + ethers.parseUnits('0.08', 'gwei');
-            maxPriority = ethers.parseUnits('0.08', 'gwei');
+            // Surge: 2.00x Base Fee + 1.50 Gwei priority tip (Traffic spike buffer)
+            maxFee = (baseGas * 200n) / 100n + ethers.parseUnits('1.50', 'gwei');
+            maxPriority = ethers.parseUnits('1.50', 'gwei');
           } else if (speed === 'custom' && job.customMaxFee) {
             maxFee = ethers.parseUnits(String(job.customMaxFee), 'gwei');
             maxPriority = job.customPriorityFee ? ethers.parseUnits(String(job.customPriorityFee), 'gwei') : ethers.parseUnits('0.02', 'gwei');
+          } else if (speed === 'hyped') {
+            // Hyped: 3.00x Base Fee + 3.00 Gwei priority tip (Heavy gas war sniper — matches UI exactly)
+            maxFee = (baseGas * 300n) / 100n + ethers.parseUnits('3.00', 'gwei');
+            maxPriority = ethers.parseUnits('3.00', 'gwei');
+          } else if (speed === 'ultra_hyped') {
+            // Ultra Hyped: 4.00x Base Fee + 4.00 Gwei priority tip (Nuclear gas war — maximum aggression)
+            maxFee = (baseGas * 400n) / 100n + ethers.parseUnits('4.00', 'gwei');
+            maxPriority = ethers.parseUnits('4.00', 'gwei');
           } else {
-            // Hyped: 2.20x Base Fee + 0.25 Gwei priority tip (Heavy gas war sniper)
-            maxFee = (baseGas * 220n) / 100n + ethers.parseUnits('0.25', 'gwei');
-            maxPriority = ethers.parseUnits('0.25', 'gwei');
+            // Default fallback: Turbo (1.50x + 0.50 Gwei) for any unrecognized gas speed
+            maxFee = (baseGas * 150n) / 100n + ethers.parseUnits('0.50', 'gwei');
+            maxPriority = ethers.parseUnits('0.50', 'gwei');
           }
 
           job.computedMaxFee = maxFee;
@@ -3220,11 +3229,11 @@ setInterval(async () => {
 
           const isPublic = job.stage === 'public';
           const hasAllSignatures = job.wallets.every(w => job.signedCalldataMap.has(w.address.toLowerCase()));
-          const canDirectPublic = isPublic && (job.canMintPublicDirect || !job.slug);
+          const canDirectPublic = isPublic; // FIX: Public stage ALWAYS uses direct mintPublic — no OpenSea signature needed
 
           // Only pre-sign in RAM at T-5s if:
           // 1. We already secured OpenSea signatures (hasAllSignatures), OR
-          // 2. Direct on-chain mintPublic is 100% verified to pass without reverting (canDirectPublic)
+          // 2. It's a public stage mint (canDirectPublic) — always direct on-chain, zero signature overhead
           if (hasAllSignatures || canDirectPublic) {
             const preSigned = [];
             const gasLimit = 150000n + (BigInt(job.quantity || 1) * 15000n);
@@ -3310,8 +3319,8 @@ setInterval(async () => {
       })();
     }
 
-    // ⚡ EXACT T-0 / FLIGHT-TIME LEAD TRIGGER (15ms lead offset so Pulse #1 lands at OpenSea at exact T-0 from Virginia)
-    const triggerThreshold = (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) ? 10 : 15;
+      // ⚡ EXACT T-0 / FLIGHT-TIME LEAD TRIGGER (15ms lead offset — optimized for VPS 2-4ms latency to OpenSea)
+      const triggerThreshold = (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) ? 10 : 15;
     if (diff <= triggerThreshold && !job.executedT0) {
       job.executedT0 = true;
       job.status = 'EXECUTING_T0';
@@ -3390,10 +3399,10 @@ setInterval(async () => {
               }, 250);
               staggerTimers.push(fallbackStartTimer);
 
-              // Fast micro-poll loop (10ms resolution) waiting for all signatures (up to 8000ms for delayed drops)
+              // Fast micro-poll loop (10ms resolution) waiting for all signatures (up to 5000ms — balanced for VPS low-latency)
               await new Promise((resolve) => {
                 const checkInterval = setInterval(() => {
-                  if (allSecured() || Date.now() - t0Start > 8000) {
+                  if (allSecured() || Date.now() - t0Start > 5000) {
                     clearInterval(checkInterval);
                     if (followupTimer) clearInterval(followupTimer);
                     staggerTimers.forEach(t => clearTimeout(t));
