@@ -3250,6 +3250,14 @@ function App() {
       log(`🔥 STARTUP 3X PING COMPLETE: All RPCs refreshed live! Primary: ${updated[0]?.name} (${updated[0]?.latency}). Top 3: [${summary}]`, 'success');
       playSound('ping');
       lastPingCompletedAtRef.current = Date.now();
+
+      // 💰 AUTO-REFRESH: Fetch wallet balances immediately after RPC ping completes (uses fastest sorted node)
+      if (wallets.length > 0) {
+        log('💰 Auto-refreshing wallet balances after RPC ping...', 'info');
+        refreshBalancesSilently().then(() => {
+          log('✅ Wallet balances auto-refreshed on startup!', 'success');
+        }).catch(() => {}); // Non-fatal — don't block startup
+      }
     } catch (err) {
       console.warn('[Startup 3x Ping]:', err.message);
     } finally {
