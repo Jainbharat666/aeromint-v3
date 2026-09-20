@@ -5859,11 +5859,13 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
 
     const effectiveGwei = parseFloat(ethers.formatUnits(feeRate, 'gwei')).toFixed(4);
 
-    // Dynamic Gas Units Detection: scales dynamically with contract type and quantity
+    // Dynamic Gas Units Detection: MUST match actual mint engine formula (executeMint L6864)
+    // to ensure dry-run cost estimates are realistic and balance checks are accurate!
     const qtyBigInt = BigInt(Math.max(1, parseInt(quantity) || 1));
-    const dynamicFallbackGasLimit = isSeaDrop 
-      ? (75000n + (qtyBigInt * 1800n)) // SeaDrop ERC721A batch minting scales ~1.8k gas per additional NFT
-      : (65000n + (qtyBigInt * 25000n)); // Standard ERC721 minting
+    const staticMintBaseUnits = isSeaDrop 
+      ? (140000n + (qtyBigInt * 30000n))  // Same as executeMint: SeaDrop base units
+      : (90000n + (qtyBigInt * 25000n));  // Same as executeMint: Standard base units
+    const dynamicFallbackGasLimit = (staticMintBaseUnits * 140n) / 100n; // Same 40% boost as executeMint
 
     log(`⛽ Real-Time Network Gas Detected: ${detectedGwei} Gwei (Effective: ${effectiveGwei} Gwei [${gasSpeed.toUpperCase()}])`, 'info');
 
@@ -5949,6 +5951,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
         simulationStatsCacheRef.current.set(w.address.toLowerCase(), mintedNum);
 
         // Dynamic Gas Units Resolver (Scale-aware + Live On-chain Probe)
+        // Uses static formula as FLOOR — never underestimates vs actual mint engine
         let limitGas = dynamicFallbackGasLimit;
         try {
           const estimated = await Promise.race([
@@ -5961,7 +5964,9 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
             new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 1500))
           ]);
           if (estimated && estimated > 21000n) {
-            limitGas = (estimated * 115n) / 100n; // 15% execution buffer on live detected gas
+            const boostedEstimate = (estimated * 140n) / 100n; // Same 40% boost as actual mint
+            // Only use RPC estimate if it's HIGHER than static formula — never underestimate!
+            limitGas = boostedEstimate > dynamicFallbackGasLimit ? boostedEstimate : dynamicFallbackGasLimit;
           }
         } catch (gasErr) {
           limitGas = dynamicFallbackGasLimit;
@@ -5979,6 +5984,21 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
         const balanceEth = parseFloat(ethers.formatEther(balanceWei));
         const hasSufficientEth = balanceEth >= requiredEth;
         const isAllowlistStage = isSeaDrop && seaDropStage === 'allowlist';
+
+        // 🛡️ GAS CLAMP DETECTION: Warn user if balance triggers auto-clamp at mint time
+        // This prevents the "READY but tip silently reduced" surprise
+        let gasWillClamp = false;
+        let clampedGweiStr = '';
+        if (hasSufficientEth && gasSpeed !== 'normal' && gasSpeed !== 'custom') {
+          const fullGasCost = limitGas * feeRate;
+          const availableForGas = balanceWei > totalValue ? (balanceWei - totalValue) : 0n;
+          if (fullGasCost > availableForGas && availableForGas > 0n) {
+            gasWillClamp = true;
+            const clampedFee = availableForGas / limitGas;
+            clampedGweiStr = parseFloat(ethers.formatUnits(clampedFee, 'gwei')).toFixed(3);
+            log(`⚠️ ${wLabel}: Balance low for ${gasSpeed.toUpperCase()} — gas tip will auto-clamp to ~${clampedGweiStr} Gwei (need ${balanceEth.toFixed(5)} ETH, have ${parseFloat(ethers.formatEther(availableForGas)).toFixed(5)} ETH for gas)`, 'warning');
+          }
+        }
         
         let isStageUpcoming = false;
         if (activeStage?.startTime) {
@@ -6005,13 +6025,14 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
         const isFullyValid = isAllowlistApproved && hasSufficientEth && !isLimitExhausted;
         
         // Deep microscopic trace in Dev stream
-        logDebug(`[SIMULATE] ${wLabel} (${wShort}): Status=${isFullyValid ? 'READY' : 'WARN'} | Bal=${balanceEth.toFixed(5)} ETH | Needed=${requiredEth.toFixed(5)} ETH | GasEst=$${gasCostUsd.toFixed(2)} | Minted=${mintedNum}/${maxPerWalletLimit}`, isFullyValid ? 'success' : 'warning', {
+        logDebug(`[SIMULATE] ${wLabel} (${wShort}): Status=${isFullyValid ? (gasWillClamp ? 'READY (GAS CLAMPED)' : 'READY') : 'WARN'} | Bal=${balanceEth.toFixed(5)} ETH | Needed=${requiredEth.toFixed(5)} ETH | GasEst=$${gasCostUsd.toFixed(2)} | Minted=${mintedNum}/${maxPerWalletLimit}${gasWillClamp ? ` | ⚠️ Tip clamped to ~${clampedGweiStr} Gwei` : ''}`, isFullyValid ? (gasWillClamp ? 'warning' : 'success') : 'warning', {
           address: w.address,
           balanceEth,
           requiredEth,
           gasCostUsd,
           isAllowlistApproved,
           hasSufficientEth,
+          gasWillClamp,
           limitGas: limitGas.toString()
         });
 
@@ -6028,6 +6049,8 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
           hasSufficientEth,
           isLimitExhausted,
           mintedNum,
+          gasWillClamp,
+          clampedGweiStr,
           isFullyValid
         };
       } catch (err) {
@@ -6068,7 +6091,11 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     if (readyWallets.length > 0) {
       log(`🟢 READY TO MINT (${readyWallets.length} Wallets):`, 'success');
       readyWallets.forEach(w => {
-        log(`   • ${w.wLabel} (${w.wShort}) ➔ ✅ Armed & Ready | Bal: ${w.balanceEth.toFixed(5)} ETH | Gas: ~$${w.gasCostUsd.toFixed(2)}`, 'success');
+        if (w.gasWillClamp) {
+          log(`   • ${w.wLabel} (${w.wShort}) ➔ ⚠️ Armed (Gas Clamped to ~${w.clampedGweiStr} Gwei) | Bal: ${w.balanceEth.toFixed(5)} ETH | Gas: ~$${w.gasCostUsd.toFixed(2)}`, 'warning');
+        } else {
+          log(`   • ${w.wLabel} (${w.wShort}) ➔ ✅ Armed & Ready | Bal: ${w.balanceEth.toFixed(5)} ETH | Gas: ~$${w.gasCostUsd.toFixed(2)}`, 'success');
+        }
       });
     }
 

@@ -3283,6 +3283,7 @@ setInterval(async () => {
                 const availForGas = w.balance - val;
                 const maxAffordableFee = availForGas / gasLimit;
                 if (maxAffordableFee < walletMaxFee && maxAffordableFee > (baseGas * 105n / 100n)) {
+                  addCloudLog(jobId, `⚠️ [BALANCE CLAMP] Wallet ${w.address.slice(0,10)}...: maxFee clamped from ${ethers.formatUnits(walletMaxFee, 'gwei')} → ${ethers.formatUnits(maxAffordableFee, 'gwei')} Gwei (balance too low for full ${speed.toUpperCase()} tip)`, 'warning');
                   walletMaxFee = maxAffordableFee;
                   walletMaxPriority = walletMaxFee > baseGas ? (walletMaxFee - baseGas) / 2n : 10000000n;
                 }
