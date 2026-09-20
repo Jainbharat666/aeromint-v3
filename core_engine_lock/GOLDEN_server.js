@@ -2461,8 +2461,10 @@ async function cloudExecuteMempoolBlast(rawSignedTxs, targetRpcs = null) {
       let isResolved = false;
 
       blastUrls.forEach(url => {
+        const reqStart = Date.now();
         axios.post(url, payload, { timeout: 6000, headers: { 'Content-Type': 'application/json' } })
           .then(res => {
+            console.log(`[RPC BLAST DETAIL] RPC ${url} responded in ${Date.now() - reqStart}ms`);
             if (res.data?.result) {
               acceptedCount++;
               if (!isResolved) {
@@ -2519,7 +2521,7 @@ async function verifyOnChainReceipts(job, jobId, acceptedResults) {
           receiptFound = true;
           if (receipt.status === 1) {
             job.status = 'EXECUTED';
-            addCloudLog(jobId, `🎉 [ON-CHAIN CONFIRMED] Block #${receipt.blockNumber} mined successfully! Gas used: ${receipt.gasUsed?.toString() || 'N/A'}`, 'success');
+            addCloudLog(jobId, `🎉 [ON-CHAIN CONFIRMED] Block #${receipt.blockNumber} mined successfully! Gas used: ${receipt.gasUsed?.toString() || 'N/A'} | TX: ${r.txHash}`, 'success');
 
             // ─── Post-Mint DB Tracking & User History Sync ───
             if (job.userId && job.userId !== 'guest') {
@@ -2571,7 +2573,7 @@ async function verifyOnChainReceipts(job, jobId, acceptedResults) {
           } else {
             job.status = 'FAILED';
             job.results = { error: `On-chain execution reverted in block #${receipt.blockNumber} (Contract rejected mint: wallet quota already filled or stage closed)` };
-            addCloudLog(jobId, `🚨 [ON-CHAIN REVERT] Transaction reverted in Block #${receipt.blockNumber}! Contract rejected mint (e.g. max limit per wallet exceeded). Gas was paid to network but 0 NFTs minted.`, 'error');
+            addCloudLog(jobId, `🚨 [ON-CHAIN REVERT] Transaction reverted in Block #${receipt.blockNumber}! TX: ${r.txHash} | Contract rejected mint (e.g. max limit per wallet exceeded). Gas was paid to network but 0 NFTs minted.`, 'error');
           }
           break;
         }
@@ -2580,7 +2582,7 @@ async function verifyOnChainReceipts(job, jobId, acceptedResults) {
     }
     if (!receiptFound) {
       job.status = 'EXECUTED';
-      addCloudLog(jobId, `⏱️ [BLOCK INCLUSION PENDING] Transaction broadcasted to mempool (Hash: ${r.txHash.slice(0, 10)}...). Confirming on explorer.`, 'info');
+      addCloudLog(jobId, `⏱️ [BLOCK INCLUSION PENDING] Transaction broadcasted to mempool. TX: ${r.txHash} | Confirming on explorer.`, 'info');
 
       if (job.userId && job.userId !== 'guest') {
         try {
@@ -2975,15 +2977,17 @@ setInterval(async () => {
             : DEFAULT_FALLBACK_RPCS.map(u => ({ url: u, name: 'System' }));
 
           const benchmarkResults = await Promise.allSettled(list.map(async (rpc) => {
-            const start = Date.now();
+            const start = typeof performance !== 'undefined' ? performance.now() : Date.now();
             await axios.post(rpc.url, { jsonrpc: '2.0', method: 'eth_blockNumber', params: [], id: 1 }, { timeout: 2000 });
-            return { url: rpc.url, name: rpc.name || 'Node', latencyMs: Date.now() - start };
+            const end = typeof performance !== 'undefined' ? performance.now() : Date.now();
+            return { url: rpc.url, name: rpc.name || 'Node', latencyMs: end - start };
           }));
 
           const validNodes = [];
           benchmarkResults.forEach(r => {
             if (r.status === 'fulfilled' && r.value?.latencyMs !== undefined) {
               validNodes.push(r.value);
+              addCloudLog(jobId, `[T-25s DETAIL] RPC ${r.value.name} responded in ${r.value.latencyMs.toFixed(3)}ms`, 'info');
             }
           });
 
@@ -2993,7 +2997,7 @@ setInterval(async () => {
           const topN = validNodes.slice(0, count);
           if (topN.length > 0) {
             job.activeBlastRpcs = topN.map(r => r.url);
-            const summary = topN.map(r => `${r.name}: ${r.latencyMs}ms`).join(' | ');
+            const summary = topN.map(r => `${r.name}: ${r.latencyMs.toFixed(3)}ms`).join(' | ');
             addCloudLog(jobId, `T-25s: Top ${topN.length} lowest-latency nodes locked in Ashburn! [${summary}]`, 'success');
           }
         } catch (e) {
@@ -3013,6 +3017,7 @@ setInterval(async () => {
             const referer = `https://opensea.io/collection/${job.slug}`;
             const activeChainId = String(job.network === 'robinhood' ? 4663 : 1);
             await Promise.allSettled(job.wallets.map(async (w) => {
+              const siweWalletStart = Date.now();
               try {
                 const nonceRes = await axios.post('https://opensea.io/__api/auth/siwe/nonce', {}, {
                   httpsAgent: openseaHttpsAgent,
@@ -3071,7 +3076,10 @@ setInterval(async () => {
                 const parsedCookies = rawCookies.map(c => c.split(';')[0]).join('; ');
                 const fullCookies = `${parsedCookies}; connected-account-server-hint=${w.address.toLowerCase()}`;
                 walletSessionCookies.set(w.address.toLowerCase(), fullCookies);
-              } catch (_) {}
+                addCloudLog(jobId, `[T-20s DETAIL] Wallet ${w.address.slice(0,10)}... SIWE authenticated in ${Date.now() - siweWalletStart}ms`, 'info');
+              } catch (siweErr) {
+                addCloudLog(jobId, `[T-20s DETAIL] Wallet ${w.address.slice(0,10)}... SIWE failed in ${Date.now() - siweWalletStart}ms: ${siweErr.message?.slice(0, 80) || 'Unknown'}`, 'warning');
+              }
             }));
 
             const authedCount = job.wallets.filter(w => walletSessionCookies.has(w.address.toLowerCase())).length;
@@ -3094,12 +3102,17 @@ setInterval(async () => {
         try {
           if (job.slug) {
             addCloudLog(jobId, `T-12s: Querying OpenSea 1-Shot GraphQL for stage "${job.stage}" signatures...`, 'warning');
+            const t12Start = Date.now();
             const resultMap = await fetchOpenSeaBatchCalldata(job);
+            const t12Elapsed = Date.now() - t12Start;
             if (resultMap && resultMap.size > 0) {
               for (const [addr, sub] of resultMap.entries()) {
                 job.signedCalldataMap.set(addr, sub);
+                addCloudLog(jobId, `[T-12s DETAIL] Wallet ${addr.slice(0,10)}... signature secured (selector: ${sub?.data?.slice(0, 10) || 'N/A'})`, 'info');
               }
-              addCloudLog(jobId, `T-12s: Early OpenSea Signatures Secured for ${resultMap.size}/${job.wallets.length} wallets!`, 'success');
+              addCloudLog(jobId, `T-12s: Early OpenSea Signatures Secured for ${resultMap.size}/${job.wallets.length} wallets in ${t12Elapsed}ms!`, 'success');
+            } else {
+              addCloudLog(jobId, `[T-12s DETAIL] OpenSea returned empty response in ${t12Elapsed}ms (stage may not be active yet)`, 'warning');
             }
           }
         } catch (_) {}
@@ -3118,8 +3131,10 @@ setInterval(async () => {
           let cleared = 0;
           await Promise.all(job.wallets.map(async (w) => {
             try {
+              const balStart = Date.now();
               const bal = await provider.getBalance(w.address);
               w.balance = bal;
+              addCloudLog(jobId, `[T-10s DETAIL] Wallet ${w.address.slice(0,10)}... balance checked in ${Date.now() - balStart}ms`, 'info');
               cleared++;
             } catch (_) {}
           }));
@@ -3173,7 +3188,9 @@ setInterval(async () => {
         try {
           const primaryRpc = job.activeBlastRpcs?.[0] || 'https://rpc.mainnet.chain.robinhood.com';
           const provider = new ethers.JsonRpcProvider(primaryRpc);
+          const gasFetchStart = Date.now();
           const feeData = await provider.getFeeData().catch(() => null);
+          addCloudLog(jobId, `[T-5s DETAIL] Gas data fetched in ${Date.now() - gasFetchStart}ms from ${primaryRpc.slice(0, 40)}...`, 'info');
           const baseGas = feeData?.maxFeePerGas || feeData?.gasPrice || 100000000n;
           
           const speed = (job.gasSpeed || 'turbo').toLowerCase();
@@ -3266,6 +3283,7 @@ setInterval(async () => {
                 const availForGas = w.balance - val;
                 const maxAffordableFee = availForGas / gasLimit;
                 if (maxAffordableFee < walletMaxFee && maxAffordableFee > (baseGas * 105n / 100n)) {
+                  addCloudLog(jobId, `⚠️ [BALANCE CLAMP] Wallet ${w.address.slice(0,10)}...: maxFee clamped from ${ethers.formatUnits(walletMaxFee, 'gwei')} → ${ethers.formatUnits(maxAffordableFee, 'gwei')} Gwei (balance too low for full ${speed.toUpperCase()} tip)`, 'warning');
                   walletMaxFee = maxAffordableFee;
                   walletMaxPriority = walletMaxFee > baseGas ? (walletMaxFee - baseGas) / 2n : 10000000n;
                 }
@@ -3283,7 +3301,9 @@ setInterval(async () => {
                 type: 2
               };
               const signer = new ethers.Wallet(w.privateKey);
+              const signStart = Date.now();
               const signedRaw = await signer.signTransaction(tx);
+              addCloudLog(jobId, `[T-5s DETAIL] Wallet ${w.address.slice(0,10)}... signed in ${Date.now() - signStart}ms (nonce: ${w.nonce})`, 'info');
               preSigned.push(signedRaw);
             }
             job.preSignedRawTxs = preSigned;
@@ -3329,7 +3349,10 @@ setInterval(async () => {
         addCloudLog(jobId, `T-0 TRIGGER ENGAGED! Executing from Ashburn Datacenter at target millisecond!`, 'success');
         try {
           if (job.preSignedRawTxs && job.preSignedRawTxs.length > 0) {
+            addCloudLog(jobId, `[T-0 BLAST] Firing ${job.preSignedRawTxs.length} pre-signed TXs to ${job.activeBlastRpcs?.length || 0} RPC nodes...`, 'info');
+            const blastT0Start = Date.now();
             const blastOutcome = await cloudExecuteMempoolBlast(job.preSignedRawTxs, job.activeBlastRpcs);
+            addCloudLog(jobId, `[T-0 BLAST] Mempool blast completed in ${Date.now() - blastT0Start}ms | Duration: ${blastOutcome.blastDurationMs}ms`, 'info');
             const acceptedResults = blastOutcome.results.filter(r => r.success);
             if (acceptedResults.length > 0) {
               job.results = blastOutcome;
@@ -3358,17 +3381,24 @@ setInterval(async () => {
                 const key = keysToUse[idx % keysToUse.length];
                 const t = setTimeout(async () => {
                   if (allSecured()) return;
+                  const pulseStart = Date.now();
+                  addCloudLog(jobId, `[T-0 STAGGER] Pulse #${idx + 1} firing at +${Date.now() - t0Start}ms (Key #${(idx % keysToUse.length) + 1})`, 'info');
                   try {
                     const m = await fetchOpenSeaBatchCalldata(job, key);
+                    const pulseElapsed = Date.now() - pulseStart;
                     if (m && m.size > 0) {
                       for (const [addr, sub] of m.entries()) {
                         if (!job.signedCalldataMap.has(addr)) {
                           job.signedCalldataMap.set(addr, sub);
                         }
                       }
-                      addCloudLog(jobId, `🎯 [STAGGER PULSE #${idx + 1} HIT] Signature secured via Key #${idx + 1} at +${Date.now() - t0Start}ms!`, 'success');
+                      addCloudLog(jobId, `🎯 [STAGGER PULSE #${idx + 1} HIT] Signature secured via Key #${idx + 1} at +${Date.now() - t0Start}ms! (OpenSea responded in ${pulseElapsed}ms)`, 'success');
+                    } else {
+                      addCloudLog(jobId, `[T-0 STAGGER] Pulse #${idx + 1} empty response in ${pulseElapsed}ms (stage not active yet)`, 'warning');
                     }
-                  } catch (_) {}
+                  } catch (pulseErr) {
+                    addCloudLog(jobId, `[T-0 STAGGER] Pulse #${idx + 1} ERROR in ${Date.now() - pulseStart}ms: ${pulseErr.message?.slice(0, 80) || 'Unknown'}`, 'error');
+                  }
                 }, delayMs);
                 staggerTimers.push(t);
               });
@@ -3383,17 +3413,25 @@ setInterval(async () => {
                     return;
                   }
                   const key = keysToUse[followupCount % keysToUse.length];
+                  const failsafeStart = Date.now();
                   try {
                     const m = await fetchOpenSeaBatchCalldata(job, key);
+                    const failsafeElapsed = Date.now() - failsafeStart;
                     if (m && m.size > 0) {
                       for (const [addr, sub] of m.entries()) {
                         if (!job.signedCalldataMap.has(addr)) {
                           job.signedCalldataMap.set(addr, sub);
                         }
                       }
-                      addCloudLog(jobId, `🎯 [FAILSAFE PULSE #${followupCount + 1} HIT] Signature secured via Key at +${Date.now() - t0Start}ms!`, 'success');
+                      addCloudLog(jobId, `🎯 [FAILSAFE PULSE #${followupCount + 1} HIT] Signature secured via Key at +${Date.now() - t0Start}ms! (OpenSea: ${failsafeElapsed}ms)`, 'success');
+                    } else if (followupCount % 10 === 0) {
+                      addCloudLog(jobId, `[T-0 FAILSAFE] Pulse #${followupCount + 1} still waiting at +${Date.now() - t0Start}ms (${failsafeElapsed}ms round-trip)`, 'info');
                     }
-                  } catch (_) {}
+                  } catch (fsErr) {
+                    if (followupCount % 10 === 0) {
+                      addCloudLog(jobId, `[T-0 FAILSAFE] Pulse #${followupCount + 1} error at +${Date.now() - t0Start}ms: ${fsErr.message?.slice(0, 60) || 'Unknown'}`, 'warning');
+                    }
+                  }
                   followupCount++;
                 }, 100);
               }, 250);
@@ -3403,6 +3441,9 @@ setInterval(async () => {
               await new Promise((resolve) => {
                 const checkInterval = setInterval(() => {
                   if (allSecured() || Date.now() - t0Start > 5000) {
+                    const waitElapsed = Date.now() - t0Start;
+                    const secured = job.wallets.filter(w => job.signedCalldataMap.has(w.address.toLowerCase())).length;
+                    addCloudLog(jobId, `[T-0 RESOLUTION] Signature wait completed in ${waitElapsed}ms | Secured: ${secured}/${job.wallets.length} | ${allSecured() ? 'ALL SECURED ✅' : 'TIMEOUT ⏱️ (5000ms limit hit)'}`, allSecured() ? 'success' : 'warning');
                     clearInterval(checkInterval);
                     if (followupTimer) clearInterval(followupTimer);
                     staggerTimers.forEach(t => clearTimeout(t));
@@ -3469,7 +3510,10 @@ setInterval(async () => {
             }
 
             if (signedRawTxs.length > 0) {
+              addCloudLog(jobId, `[T-0 BLAST] Firing ${signedRawTxs.length} WL-signed TXs to ${job.activeBlastRpcs?.length || 0} RPC nodes at +${Date.now() - t0Start}ms...`, 'info');
+              const blastWlStart = Date.now();
               const blastOutcome = await cloudExecuteMempoolBlast(signedRawTxs, job.activeBlastRpcs);
+              addCloudLog(jobId, `[T-0 BLAST] WL mempool blast completed in ${Date.now() - blastWlStart}ms | Duration: ${blastOutcome.blastDurationMs}ms`, 'info');
               const acceptedResults = blastOutcome.results.filter(r => r.success);
               if (acceptedResults.length > 0) {
                 job.results = blastOutcome;
