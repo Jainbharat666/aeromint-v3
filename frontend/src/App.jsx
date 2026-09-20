@@ -1587,7 +1587,7 @@ function App() {
             if (acceptedTxs.length > 0) {
               acceptedTxs.forEach(r => {
                 log(`🔗 [ON-CHAIN PROOF] TX: ${r.txHash}`, 'success');
-                log(`🌐 Robinhood Explorer: https://explorer.mainnet.chain.robinhood.com/tx/${r.txHash}`, 'info');
+                log(`🌐 Explorer: ${NETWORKS[selectedNetworkKey]?.explorer || 'https://robinhoodchain.blockscout.com'}/tx/${r.txHash}`, 'info');
               });
 
               try {
@@ -2825,6 +2825,55 @@ function App() {
     setDebugLogs(prev => [...prev.slice(-1000), { text, type, time: timestamp, extra: extraData }]);
   }
 
+  // 🔗 Render log text with clickable links for TX hashes, Block numbers, and URLs
+  function renderLogWithLinks(text) {
+    if (!text || typeof text !== 'string') return text;
+    const explorerBase = NETWORKS[selectedNetworkKey]?.explorer || 'https://robinhoodchain.blockscout.com';
+    // Split text into parts: TX hashes (0x + 64 hex chars), Block #numbers, and URLs
+    const parts = [];
+    let lastIndex = 0;
+    // Combined regex: match TX hashes, Block #numbers, or full URLs
+    const regex = /(0x[a-fA-F0-9]{64})|(Block\s*#(\d+))|(https?:\/\/[^\s,)]+)/g;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      // Push preceding text
+      if (match.index > lastIndex) {
+        parts.push(text.slice(lastIndex, match.index));
+      }
+      if (match[1]) {
+        // TX Hash
+        const txHash = match[1];
+        parts.push(
+          <a key={match.index} href={`${explorerBase}/tx/${txHash}`} target="_blank" rel="noreferrer" style={{ color: '#a78bfa', textDecoration: 'underline', cursor: 'pointer' }} title="View on Explorer">
+            {txHash.slice(0, 10)}...{txHash.slice(-6)}
+          </a>
+        );
+      } else if (match[2]) {
+        // Block #number
+        const blockNum = match[3];
+        parts.push(
+          <a key={match.index} href={`${explorerBase}/block/${blockNum}`} target="_blank" rel="noreferrer" style={{ color: '#67e8f9', textDecoration: 'underline', cursor: 'pointer' }} title="View Block">
+            Block #{blockNum}
+          </a>
+        );
+      } else if (match[4]) {
+        // URL
+        const url = match[4];
+        parts.push(
+          <a key={match.index} href={url} target="_blank" rel="noreferrer" style={{ color: '#86efac', textDecoration: 'underline', cursor: 'pointer' }}>
+            {url.length > 60 ? url.slice(0, 57) + '...' : url}
+          </a>
+        );
+      }
+      lastIndex = match.index + match[0].length;
+    }
+    // Push remaining text
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex));
+    }
+    return parts.length > 0 ? parts : text;
+  }
+
   async function handleCopyLogsToClipboard(mode = 'current') {
     const isDebugMode = mode === 'debug' || (mode === 'current' && consoleViewMode === 'debug');
     const targetLogs = isDebugMode ? debugLogs : logs;
@@ -2839,13 +2888,27 @@ function App() {
       const activeContractAddr = detectedContracts[selectedContractIndex]?.address || 'None';
       const activeStage = selectedTargetStage || (collectionPreview?.stages?.find(st => st.type === seaDropStage) || collectionPreview?.stages?.[0]);
       
+      const dumpGasBase = liveGasData?.baseFee || '0.0';
+      const dumpGasTip = liveGasData?.priorityFee || '0.0';
+      const dumpSelectedWallets = wallets.filter(w => w.selected);
+      const dumpRpcPrimary = rpcEndpoints?.find(r => r.primary) || rpcEndpoints?.[0];
       text = `=== AEROMINT ADVANCED DIAGNOSTIC DEBUG DUMP ===\r\n` +
              `Generated At: ${new Date().toISOString()}\r\n` +
              `Active Network: ${selectedNetworkKey} (Chain ID: ${NETWORKS[selectedNetworkKey]?.chainId || 'Unknown'})\r\n` +
              `Target Contract: ${activeContractAddr}\r\n` +
+             `SeaDrop Contract: ${NETWORKS[selectedNetworkKey]?.seadrop || 'N/A'}\r\n` +
              `Drop Slug: ${collectionPreview?.slug || 'None'}\r\n` +
              `Active Stage: ${activeStage?.name || 'Unknown'} (Type: ${activeStage?.type || 'public'}, Limit: ${activeStage?.maxPerWallet || 1})\r\n` +
-             `Total Wallets Loaded: ${wallets.length} (Selected: ${wallets.filter(w => w.selected).length})\r\n` +
+             `Mint Price: ${collectionPreview?.price || '0.0'} ETH | Quantity: ${quantity || 1}\r\n` +
+             `Total Wallets Loaded: ${wallets.length} (Selected: ${dumpSelectedWallets.length})\r\n` +
+             `--- GAS CONFIG ---\r\n` +
+             `Gas Speed: ${(gasSpeed || 'turbo').toUpperCase()} | BaseFee: ${dumpGasBase} Gwei | Tip: ${dumpGasTip} Gwei | Block: #${liveGasData?.blockNumber || '---'}\r\n` +
+             `--- RPC STATUS ---\r\n` +
+             `Primary RPC: ${dumpRpcPrimary?.name || 'Default'} (${dumpRpcPrimary?.latency ? dumpRpcPrimary.latency + 'ms' : 'N/A'}) | Total Nodes: ${rpcEndpoints?.length || 0}\r\n` +
+             `--- WALLETS (${dumpSelectedWallets.length} Selected) ---\r\n` +
+             dumpSelectedWallets.map((w, i) => `#${i + 1} ${w.name || 'Wallet'} (${w.address?.slice(0, 6)}...${w.address?.slice(-4)}): Balance=${w.balance || '?'} ETH | Nonce=${w.nonce ?? '?'}`).join('\r\n') + '\r\n' +
+             `--- CLOUD VPS ---\r\n` +
+             `Job ID: ${cloudJobId || 'None'} | Status: ${cloudJobStatus || 'Idle'}\r\n` +
              `------------------------------------------------\r\n` +
              targetLogs.map(l => `[${l.time}] [${l.type.toUpperCase()}] ${l.text}${l.extra ? ' | Payload: ' + JSON.stringify(l.extra) : ''}`).join('\r\n');
     } else {
@@ -4318,15 +4381,18 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
     });
 
     const blastPromise = Promise.all(preparedTxs.map(async (ptx) => {
+        const blastWalletStart = performance.now();
         try {
             if (rpcMode === 'blast') {
                 const hash = await blastRawTxToAllRpcs(ptx.rawSignedTx);
+                logDebug(`[BLAST] ${ptx.wallet.name || 'W#' + ptx.wallet.index}: Blast accepted in ${(performance.now() - blastWalletStart).toFixed(1)}ms | hash=${hash?.slice(0,18)}...`, 'info');
                 return { wallet: ptx.wallet, hash, success: true };
             } else {
                 const txResponse = await Promise.race([
                     provider.broadcastTransaction(ptx.rawSignedTx),
                     new Promise((_, reject) => setTimeout(() => reject(new Error('Broadcast timeout (8s)')), 8000))
                 ]);
+                logDebug(`[BLAST] ${ptx.wallet.name || 'W#' + ptx.wallet.index}: Single-RPC accepted in ${(performance.now() - blastWalletStart).toFixed(1)}ms | hash=${txResponse.hash?.slice(0,18)}...`, 'info');
                 return { wallet: ptx.wallet, hash: txResponse.hash, success: true };
             }
         } catch (e) {
@@ -6068,6 +6134,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
       const attemptTimeoutMs = selectedNetworkKey === 'ethereum' ? 14000 : 8000;
       const pollStart = Date.now();
       let lastReport = 0;
+      logDebug(`[MONITOR] ${wallet.name || 'W#' + wallet.index}: Polling receipt for TX ${txHash} (timeout=${attemptTimeoutMs}ms, attempt=${currentAttempt})`, 'info');
       while (Date.now() - pollStart < attemptTimeoutMs) {
         try {
           rawReceipt = await fetchReceiptFastMultiRpcs(txHash);
@@ -6087,6 +6154,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
         const blockNum = parseInt(rawReceipt.blockNumber, 16);
         const gasUsed = BigInt(rawReceipt.gasUsed || '0x0');
         const effGasPrice = rawReceipt.effectiveGasPrice ? BigInt(rawReceipt.effectiveGasPrice) : 1000000000n;
+        logDebug(`[MONITOR] ${wallet.name || 'W#' + wallet.index}: Receipt found in ${Date.now() - pollStart}ms | status=${receiptStatus} | block=#${blockNum} | gasUsed=${gasUsed.toString()} | effGasPrice=${ethers.formatUnits(effGasPrice, 'gwei')}Gwei | TX=${txHash}`, 'info', { status: receiptStatus, block: blockNum, gasUsed: gasUsed.toString(), effGasPrice: effGasPrice.toString() });
 
         if (receiptStatus === 1) {
           success = true;
@@ -6101,7 +6169,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
             return item;
           }));
 
-          log(`🎉 ${wallet.name || 'Wallet #' + wallet.index}: ${currentAttempt > 1 ? 'Replacement TX ' : ''}Confirmed in block #${blockNum}! Gas: $${gasCostUsd.toFixed(3)} USD`, 'success');
+          log(`🎉 ${wallet.name || 'Wallet #' + wallet.index}: ${currentAttempt > 1 ? 'Replacement TX ' : ''}Confirmed in block #${blockNum}! TX: ${txHash} | Gas: $${gasCostUsd.toFixed(3)} USD`, 'success');
           triggerCelebration();
           playSound('victory');
           sendWebhookAlert('🎉 Mint Transaction Confirmed!', `${wallet.name || 'Wallet #' + wallet.index} confirmed in block #${blockNum}! Gas: $${gasCostUsd.toFixed(2)} USD. Hash: ${txHash}`);
@@ -6171,7 +6239,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
           } catch (callErr) {
             revertMsg = parseRevertReason(callErr);
           }
-          log(`❌ ${wallet.name || 'Wallet #' + wallet.index} TX reverted on-chain in block #${blockNum}.${revertMsg ? ' ' + revertMsg : ''}`, 'error');
+          log(`❌ ${wallet.name || 'Wallet #' + wallet.index} TX reverted on-chain in block #${blockNum}. TX: ${txHash}${revertMsg ? ' | ' + revertMsg : ''}`, 'error');
           setWallets(prev => prev.map(item => item.index === wallet.index ? { ...item, status: 'ERROR' } : item));
           
           const historyItem = {
@@ -6523,6 +6591,8 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
       computedMaxPriority = computedMaxFee;
     }
 
+    logDebug(`[MINT-ENGINE] Gas Computed: speed=${gasSpeed} | baseFee=${ethers.formatUnits(baseGas, 'gwei')} Gwei | maxFee=${ethers.formatUnits(computedMaxFee, 'gwei')} Gwei | tip=${ethers.formatUnits(computedMaxPriority, 'gwei')} Gwei`, 'info', { gasSpeed, baseGas: baseGas.toString(), maxFee: computedMaxFee.toString(), priority: computedMaxPriority.toString() });
+
     // Exact OSNM-Z Safe Buffer (350,000 for SeaDrop Signed / Standard L2 NFT Mints) — Never runs Out Of Gas!
     const isAllowlistTarget = seaDropStage === 'allowlist' || selectedTargetStage?.type === 'allowlist';
     const limitGas = customGasLimit && !isNaN(parseInt(customGasLimit))
@@ -6587,12 +6657,19 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
               const pulseNum = idx + 1;
               const timer = setTimeout(() => {
                 if (checkAllCached()) return;
+                const pulseStart = performance.now();
+                logDebug(`[STAGGER] Pulse #${pulseNum} firing at +${Date.now() - waitStart}ms from pipeline start`, 'info');
                 fetchOpenSeaBatchMintData(slug, activeSelected, quantity).then(batchMap => {
                   if (batchMap && batchMap.size > 0) {
                     const elapsed = targetT0 ? getNtpNow() - targetT0 : Date.now() - waitStart;
+                    logDebug(`[STAGGER] Pulse #${pulseNum} OpenSea response in ${(performance.now() - pulseStart).toFixed(1)}ms | signatures=${batchMap.size}/${activeSelected.length}`, 'success');
                     log(`🎯 [STAGGER PULSE #${pulseNum} HIT] Signature secured via Key #${pulseNum} at +${Math.max(0, elapsed)}ms!`, 'success');
+                  } else {
+                    logDebug(`[STAGGER] Pulse #${pulseNum} OpenSea returned empty in ${(performance.now() - pulseStart).toFixed(1)}ms (stage may not be active yet)`, 'warning');
                   }
-                }).catch(() => {});
+                }).catch((err) => {
+                  logDebug(`[STAGGER] Pulse #${pulseNum} ERROR in ${(performance.now() - pulseStart).toFixed(1)}ms: ${err.message || err}`, 'error');
+                });
               }, delayMs);
               pulseTimers.push(timer);
             });
@@ -6638,6 +6715,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
           // ⚡ PURE UNRESTRICTED HOT PATH: Zero balance check & zero pre-flight lag (Direct instant fire)
           const walletSigner = new ethers.Wallet(w.privateKey, provider);
           
+          const walletPrepStart = performance.now();
           let txNonce = cachedNoncesRef.current.get(w.address.toLowerCase());
           if (txNonce === undefined) {
             try {
@@ -6648,6 +6726,8 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
               return;
             }
           }
+
+          logDebug(`[MINT-ENGINE] ${w.name || 'W#' + w.index} nonce=${txNonce} fetched in ${(performance.now() - walletPrepStart).toFixed(2)}ms`, 'info');
 
           // Build calldata per wallet (dynamically resolving recipient address to current wallet)
           let txTarget = activeContract.address;
@@ -6681,6 +6761,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
             }
 
             if (signedData && signedData.data) {
+              logDebug(`[MINT-ENGINE] ${w.name || 'W#' + w.index}: OpenSea signed calldata found (selector: ${signedData.data?.slice(0, 10)}, to: ${signedData.to?.slice(0, 10)}...)`, 'info', { selector: signedData.data?.slice(0, 10), to: signedData.to });
               log(`🟡 ${w.name || 'Wallet #' + w.index}: Using OpenSea Verified Signed Mint Calldata [mintSigned]`, 'warning');
               txData = signedData.data;
               txTarget = signedData.to || seadropTarget;
@@ -6824,7 +6905,10 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
             type: 2
           };
 
+          const signStartMs = performance.now();
           const rawSignedTx = await walletSigner.signTransaction(txRequest);
+          const signElapsed = (performance.now() - signStartMs).toFixed(2);
+          logDebug(`[MINT-ENGINE] ${w.name || 'W#' + w.index}: TX signed in ${signElapsed}ms | nonce=${txNonce} | gasLimit=${dynLimit.toString()} | maxFee=${ethers.formatUnits(dynMaxFee, 'gwei')}Gwei | tip=${ethers.formatUnits(dynPriority, 'gwei')}Gwei | value=${ethers.formatEther(walletValue)}ETH | to=${txTarget?.slice(0,10)}...`, 'info', { signMs: signElapsed, nonce: txNonce, gasLimit: dynLimit.toString(), maxFee: dynMaxFee.toString(), priority: dynPriority.toString() });
           preparedTxs.push({ wallet: w, rawSignedTx, txRequest, walletSigner, txNonce });
         } catch (err) {
           log(`❌ ${w.name || 'Wallet #' + w.index} Prep Failed: ${err.reason || err.message}`, 'error');
@@ -6848,7 +6932,8 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
           const ptx = preparedTxs.find(p => p.wallet.index === wallet.index);
           
           if (success) {
-              log(`🚀 ${wallet.name || 'Wallet #' + wallet.index} Broadcasted! Hash: ${hash.slice(0, 18)}...`, 'success');
+              log(`🚀 ${wallet.name || 'Wallet #' + wallet.index} Broadcasted! Hash: ${hash}`, 'success');
+              logDebug(`[MINT-ENGINE] ${wallet.name || 'W#' + wallet.index}: TX=${hash} | nonce=${ptx?.txNonce} | maxFee=${ptx?.txRequest?.maxFeePerGas ? ethers.formatUnits(ptx.txRequest.maxFeePerGas, 'gwei') : '?'}Gwei`, 'info');
               setWallets(prev => prev.map(item => item.index === wallet.index ? { ...item, status: 'MINTING', txHash: hash } : item));
               // 🛡️ P0 NONCE CONSUMPTION: Seed next expected nonce to prevent collision on rapid follow-up
               if (ptx && typeof ptx.txNonce === 'number') {
@@ -10415,9 +10500,9 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                   <div className="console-box human-view animate-fade" ref={consoleBoxRef} style={{ height: '330px' }}>
                     <div className="console-content-inner">
                       {logs.map((logItem, idx) => (
-                        <div key={idx} className={`console-line ${logItem.type}`}>
-                          [{logItem.time}] {logItem.text}
-                        </div>
+                      <div key={idx} className={`console-line ${logItem.type}`}>
+                        [{logItem.time}] {renderLogWithLinks(logItem.text)}
+                      </div>
                       ))}
                     </div>
                   </div>
@@ -10431,7 +10516,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                         <div key={idx} className={`console-line ${logItem.type}`} style={{ fontFamily: 'monospace', fontSize: '0.7rem' }}>
                           <span className="debug-timestamp">[{logItem.time}]</span>{' '}
                           <span className="debug-text">
-                            {logItem.text}
+                            {renderLogWithLinks(logItem.text)}
                           </span>
                           {logItem.extra && (
                             <span className="debug-extra" style={{ marginLeft: '0.4rem' }}>
@@ -12610,7 +12695,7 @@ async function lockstepBarrierBlast(preparedTxs, provider) {
                     }}
                   >
                     <span className="chat-ts" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', marginRight: '0.3rem' }}>[{logItem.time}]</span>
-                    {logItem.text}
+                    {renderLogWithLinks(logItem.text)}
                   </div>
                 ))}
                 {logs.length === 0 && (
